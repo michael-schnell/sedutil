@@ -92,12 +92,11 @@ jobs:
 
           # Fix for GCC 10+ (syslinux 6.03 needs -fcommon flag)
           echo "Patching syslinux Makefile for GCC 10+ compatibility..."
-          # Patch all Makefiles to add -fcommon flag
-          find . -name "Makefile" -o -name "*.mk" | while read makefile; do
-            sed -i 's/\(CFLAGS.*\)/\1 -fcommon/' "$makefile" 2>/dev/null || true
-          done
-          # Also set it as environment variable
-          export CFLAGS="-fcommon $CFLAGS"
+          # Apply patch to fix multiple definition errors
+          sed -i 's/^GCCWARN\s*:=\s*\(.*\)/GCCWARN := \1 -fcommon/' MCONFIG
+          # Set environment variable as fallback
+          export CFLAGS="-fcommon"
+          export CXXFLAGS="-fcommon"
 
           make -j$(nproc) efi64
           cd ../..
