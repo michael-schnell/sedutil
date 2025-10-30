@@ -85,8 +85,9 @@ jobs:
           cp -r ../../buildroot/packages/sedutil/ package/
 
           echo "=== Fixing BR2_EXTERNAL in buildroot configs ==="
-          # Add BR2_EXTERNAL to config files
-          for config in 64bit/.config 32bit/.config; do
+          # Add BR2_EXTERNAL to config files and create .br-external.mk files
+          for dir in 64bit 32bit; do
+            config="$dir/.config"
             if [ -f "$config" ]; then
               echo "Found config: $config"
               if ! grep -q "^BR2_EXTERNAL" "$config"; then
@@ -95,6 +96,9 @@ jobs:
               else
                 echo "BR2_EXTERNAL already exists in $config"
               fi
+              # Create empty .br-external.mk file
+              echo "Creating $dir/.br-external.mk"
+              touch "$dir/.br-external.mk"
             else
               echo "Config not found: $config"
             fi
