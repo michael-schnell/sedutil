@@ -79,16 +79,10 @@ jobs:
           fi
           echo "Found syslinux at: $SYSLINUX_DIR"
 
-          # Fix for GCC 10+ (syslinux 6.03 needs -fcommon flag)
-          echo "Patching syslinux Makefile for GCC 10+ compatibility..."
+          # Fix for GCC 10+ (syslinux 6.03 multiple definition errors)
+          echo "Applying GCC 10+ compatibility patch..."
           cd "$SYSLINUX_DIR"
-          # Apply patch to fix multiple definition errors
-          if [ -f MCONFIG ]; then
-            sed -i 's/^GCCWARN\s*:=\s*\(.*\)/GCCWARN := \1 -fcommon/' MCONFIG
-          fi
-          # Set environment variable as fallback
-          export CFLAGS="-fcommon"
-          export CXXFLAGS="-fcommon"
+          patch -p1 < ../../../syslinux-gcc10-muldefs.patch
 
           make -j$(nproc) efi64
           cd ../..
