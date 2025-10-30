@@ -57,21 +57,29 @@ jobs:
           echo "=== Getting resources ==="
           ./getresources
 
-          echo "=== Fixing buildroot configuration ==="
-          # Fix the BR2_EXTERNAL issue by adding it to the config files
-          cd scratch/buildroot
-          for dir in 64bit 32bit; do
-            if [ -f "$dir/.config" ]; then
-              # Add BR2_EXTERNAL if not present
-              if ! grep -q "^BR2_EXTERNAL" "$dir/.config"; then
-                echo 'BR2_EXTERNAL=' >> "$dir/.config"
-              fi
-            fi
-          done
-          cd ../..
-
           echo "=== Building PBA root ==="
-          ./buildpbaroot
+          ./buildpbaroot || {
+            echo "buildpbaroot failed, checking for BR2_EXTERNAL issue..."
+            # Fix the BR2_EXTERNAL issue by adding it to the config files
+            if [ -d scratch/buildroot ]; then
+              cd scratch/buildroot
+              for dir in 64bit 32bit; do
+                if [ -f "$dir/.config" ]; then
+                  # Add BR2_EXTERNAL if not present
+                  if ! grep -q "^BR2_EXTERNAL" "$dir/.config"; then
+                    echo "Adding BR2_EXTERNAL to $dir/.config"
+                    echo 'BR2_EXTERNAL=' >> "$dir/.config"
+                  fi
+                fi
+              done
+              cd ../..
+              echo "Retrying buildpbaroot..."
+              ./buildpbaroot
+            else
+              echo "scratch/buildroot not found, cannot fix"
+              exit 1
+            fi
+          }
 
           echo "=== Building syslinux for UEFI ==="
           cd scratch/syslinux-*
