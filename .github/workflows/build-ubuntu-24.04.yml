@@ -99,6 +99,10 @@ jobs:
               # Create empty .br-external.mk file
               echo "Creating $dir/.br-external.mk"
               touch "$dir/.br-external.mk"
+
+              # Update config to new buildroot version (updates package versions)
+              echo "Updating $config to buildroot 2021.08.3 defaults..."
+              make O=$dir olddefconfig
             else
               echo "Config not found: $config"
             fi
