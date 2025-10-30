@@ -57,19 +57,28 @@ jobs:
           echo "=== Getting resources ==="
           ./getresources
 
-          echo "=== Pre-configuring buildroot configs with BR2_EXTERNAL ==="
-          # Add BR2_EXTERNAL to config files before buildpbaroot runs
-          for config in buildroot/64bit/.config buildroot/32bit/.config; do
-            if [ -f "$config" ]; then
-              if ! grep -q "^BR2_EXTERNAL" "$config"; then
-                echo "Adding BR2_EXTERNAL to $config"
-                echo 'BR2_EXTERNAL=' >> "$config"
+          echo "=== Building PBA root (with BR2_EXTERNAL fix) ==="
+          # Run buildpbaroot but fix BR2_EXTERNAL issue if it fails
+          ./buildpbaroot || {
+            echo "buildpbaroot failed, applying BR2_EXTERNAL fix..."
+            # Add BR2_EXTERNAL to config files in scratch directory
+            for config in scratch/buildroot/64bit/.config scratch/buildroot/32bit/.config; do
+              if [ -f "$config" ]; then
+                if ! grep -q "^BR2_EXTERNAL" "$config"; then
+                  echo "Adding BR2_EXTERNAL to $config"
+                  echo 'BR2_EXTERNAL=' >> "$config"
+                fi
               fi
-            fi
-          done
-
-          echo "=== Building PBA root ==="
-          ./buildpbaroot
+            done
+            # Retry the build
+            echo "Retrying buildpbaroot..."
+            cd scratch/buildroot
+            echo "Building 64bit PBA Linux system..."
+            make -j$(nproc) O=64bit 2>&1 | tee 64bit/build_output.txt || exit 1
+            echo "Building 32bit PBA Linux system..."
+            make -j$(nproc) O=32bit 2>&1 | tee 32bit/build_output.txt || exit 1
+            cd ../..
+          }
 
           echo "=== Building syslinux for UEFI ==="
           SYSLINUX_DIR=$(find scratch -maxdepth 1 -type d -name 'syslinux-*' | head -n 1)
