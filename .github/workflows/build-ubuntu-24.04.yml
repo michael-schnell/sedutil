@@ -57,28 +57,47 @@ jobs:
           echo "=== Getting resources ==="
           ./getresources
 
-          echo "=== Building PBA root (with BR2_EXTERNAL fix) ==="
-          # Run buildpbaroot but fix BR2_EXTERNAL issue if it fails
-          ./buildpbaroot || {
-            echo "buildpbaroot failed, applying BR2_EXTERNAL fix..."
-            # Add BR2_EXTERNAL to config files in scratch directory
-            for config in scratch/buildroot/64bit/.config scratch/buildroot/32bit/.config; do
-              if [ -f "$config" ]; then
-                if ! grep -q "^BR2_EXTERNAL" "$config"; then
-                  echo "Adding BR2_EXTERNAL to $config"
-                  echo 'BR2_EXTERNAL=' >> "$config"
-                fi
+          echo "=== Fixing BR2_EXTERNAL in buildroot configs ==="
+          # Add BR2_EXTERNAL to config files in scratch directory
+          for config in scratch/buildroot/64bit/.config scratch/buildroot/32bit/.config; do
+            if [ -f "$config" ]; then
+              echo "Found config: $config"
+              if ! grep -q "^BR2_EXTERNAL" "$config"; then
+                echo "Adding BR2_EXTERNAL to $config"
+                echo 'BR2_EXTERNAL=' >> "$config"
+              else
+                echo "BR2_EXTERNAL already exists in $config"
               fi
-            done
-            # Retry the build
-            echo "Retrying buildpbaroot..."
-            cd scratch/buildroot
-            echo "Building 64bit PBA Linux system..."
-            make -j$(nproc) O=64bit 2>&1 | tee 64bit/build_output.txt || exit 1
-            echo "Building 32bit PBA Linux system..."
-            make -j$(nproc) O=32bit 2>&1 | tee 32bit/build_output.txt || exit 1
-            cd ../..
-          }
+            else
+              echo "Config not found: $config"
+            fi
+          done
+
+          echo "=== Building PBA root ==="
+          # Build manually instead of using buildpbaroot (which has exit 0)
+          cd scratch/buildroot
+          echo "Building 64bit PBA Linux system..."
+          make -j$(nproc) O=64bit 2>&1 | tee 64bit/build_output.txt
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "ERROR: 64bit build failed"
+            tail -100 64bit/build_output.txt
+            exit 1
+          fi
+          echo "Checking 64bit build outputs..."
+          ls -lah 64bit/images/ || echo "64bit/images/ not found"
+          ls -lah 64bit/target/sbin/ || echo "64bit/target/sbin/ not found"
+
+          echo "Building 32bit PBA Linux system..."
+          make -j$(nproc) O=32bit 2>&1 | tee 32bit/build_output.txt
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "ERROR: 32bit build failed"
+            tail -100 32bit/build_output.txt
+            exit 1
+          fi
+          echo "Checking 32bit build outputs..."
+          ls -lah 32bit/images/ || echo "32bit/images/ not found"
+          ls -lah 32bit/target/sbin/ || echo "32bit/target/sbin/ not found"
+          cd ../..
 
           echo "=== Building syslinux for UEFI ==="
           SYSLINUX_DIR=$(find scratch -maxdepth 1 -type d -name 'syslinux-*' | head -n 1)
