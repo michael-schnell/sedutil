@@ -94,15 +94,16 @@ jobs:
         if: steps.locate.outputs.binaries == 'true'
         run: |
           mkdir -p debpkg/DEBIAN debpkg/usr/local/bin
-          cat > debpkg/DEBIAN/control << 'EOF'
-          Package: sedutil
-          Version: ${GITHUB_REF_NAME:-0.0.0}
-          Section: base
-          Priority: optional
-          Architecture: amd64
-          Maintainer: ${DEB_MAINTAINER}
-          Description: sedutil OPAL drive utilities
-          EOF
+          VERSION="${GITHUB_REF_NAME:-0.0.0}"
+          VERSION="${VERSION#v}"
+          echo "Package: sedutil" > debpkg/DEBIAN/control
+          echo "Version: ${VERSION}" >> debpkg/DEBIAN/control
+          echo "Section: base" >> debpkg/DEBIAN/control
+          echo "Priority: optional" >> debpkg/DEBIAN/control
+          echo "Architecture: amd64" >> debpkg/DEBIAN/control
+          echo "Maintainer: ${DEB_MAINTAINER}" >> debpkg/DEBIAN/control
+          echo "Description: sedutil OPAL drive utilities" >> debpkg/DEBIAN/control
+          cat debpkg/DEBIAN/control
           cp .ci_artifacts/sedutil-cli debpkg/usr/local/bin/ || true
           cp .ci_artifacts/sedutil-sleep debpkg/usr/local/bin/ 2>/dev/null || true
           fakeroot dpkg-deb --build debpkg sedutil-ubuntu-24.04-x86_64.deb || (ls -R debpkg && false)
