@@ -45,42 +45,64 @@ jobs:
 
       - name: Build rescue image (UEFI 64-bit Rescue64)
         working-directory: ./images
+        continue-on-error: true
         run: |
-          ./getresources || true
-          ./buildUEFI64 || true
-          ./buildrescue Rescue64 || true
+          echo "=== Getting resources ==="
+          ./getresources || echo "getresources failed"
+          echo "=== Building PBA root ==="
+          ./buildpbaroot || echo "buildpbaroot failed"
+          echo "=== Building UEFI64 ==="
+          ./buildUEFI64 || echo "buildUEFI64 failed"
+          echo "=== Building rescue image ==="
+          ./buildrescue Rescue64 || echo "buildrescue failed"
+          echo "=== Listing built images ==="
+          ls -lah *.img* 2>/dev/null || echo "No image files found"
 
       - name: Locate produced artifacts
         id: locate
         run: |
           mkdir -p .ci_artifacts
 
+          echo "=== Looking for rescue images in images/ ==="
+          ls -lah images/*.img* 2>/dev/null || echo "No .img files found"
+
           # Collect rescue image (prefer gz if present)
           RESCUE_GZ=$(ls images/*Rescue*64*.img.gz 2>/dev/null || true)
           RESCUE_IMG=$(ls images/*Rescue*64*.img 2>/dev/null || true)
 
           if [ -n "$RESCUE_GZ" ]; then
+            echo "Found rescue image (compressed): $RESCUE_GZ"
             cp "$RESCUE_GZ" .ci_artifacts/ || true
             echo "rescue_file=$(basename $RESCUE_GZ)" >> $GITHUB_OUTPUT
           elif [ -n "$RESCUE_IMG" ]; then
+            echo "Found rescue image (uncompressed): $RESCUE_IMG, compressing..."
             gzip -c "$RESCUE_IMG" > .ci_artifacts/$(basename $RESCUE_IMG).gz || true
             echo "rescue_file=$(basename $RESCUE_IMG).gz" >> $GITHUB_OUTPUT
           else
             echo "rescue_file=" >> $GITHUB_OUTPUT
-            echo "No rescue image found in images/" >&2
+            echo " No rescue image found in images/" >&2
           fi
 
-          # Collect sedutil binaries any location
-          BINFILES=$(find . -type f -name 'sedutil-cli' -o -name 'sedutil-sleep' 2>/dev/null || true)
+          echo ""
+          echo "=== Looking for sedutil binaries ==="
+
+          # Collect sedutil binaries (sedutil-cli and linuxpba)
+          BINFILES=$(find . -type f \( -name 'sedutil-cli' -o -name 'linuxpba' \) 2>/dev/null || true)
           if [ -n "$BINFILES" ]; then
+            echo "Found binaries:"
             for f in $BINFILES; do
+              echo "  - $f"
               cp "$f" .ci_artifacts/ || true
             done
             echo "binaries=true" >> $GITHUB_OUTPUT
           else
             echo "binaries=false" >> $GITHUB_OUTPUT
-            echo "No sedutil binaries found by name 'sedutil-cli' or 'sedutil-sleep'" >&2
+            echo " No sedutil binaries found" >&2
           fi
+
+          echo ""
+          echo "=== Contents of .ci_artifacts ==="
+          ls -lah .ci_artifacts/
 
       - name: Create tar.gz artifact
         if: steps.locate.outputs.binaries == 'true'
@@ -151,9 +173,18 @@ jobs:
       - name: Smoke test binary
         if: steps.locate.outputs.binaries == 'true'
         run: |
-          file artifacts/*sedutil* || true
-          chmod +x artifacts/sedutil-cli || true
-          ./artifacts/sedutil-cli --version || true
+          echo "=== Artifact file types ==="
+          file artifacts/* || true
+          echo ""
+          echo "=== Extracting sedutil-cli from tar.gz for testing ==="
+          tar -xzf artifacts/sedutil-ubuntu-24.04-x86_64.tar.gz -C artifacts/ sedutil-cli 2>/dev/null || true
+          if [ -f artifacts/sedutil-cli ]; then
+            chmod +x artifacts/sedutil-cli
+            echo "=== Testing sedutil-cli --version ==="
+            ./artifacts/sedutil-cli --version || echo "Version command failed"
+          else
+            echo "Warning: sedutil-cli not found in tar.gz, skipping smoke test"
+          fi
 
       - name: Create GitHub Release and publish artifacts
         if: startsWith(github.ref, 'refs/tags/')
