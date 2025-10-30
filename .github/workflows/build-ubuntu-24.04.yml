@@ -57,9 +57,36 @@ jobs:
           echo "=== Getting resources ==="
           ./getresources
 
+          echo "=== Setting up buildroot (clone and copy configs) ==="
+          cd scratch
+          # Clone buildroot
+          rm -rf buildroot
+          git clone ${BUILDROOT:-git://git.buildroot.net/buildroot}
+          cd buildroot
+          git checkout -b PBABUILD ${BUILDROOT_TAG:-2019.02.6}
+          git reset --hard
+          git clean -df
+
+          # Copy config files for 64bit
+          mkdir 64bit
+          cp ../../buildroot/64bit/.config 64bit/
+          cp ../../buildroot/64bit/* 64bit/ 2>/dev/null || true
+          cp -r ../../buildroot/64bit/overlay 64bit/ 2>/dev/null || true
+
+          # Copy config files for 32bit
+          mkdir 32bit
+          cp ../../buildroot/32bit/.config 32bit/
+          cp ../../buildroot/32bit/* 32bit/ 2>/dev/null || true
+          cp -r ../../buildroot/32bit/overlay 32bit/ 2>/dev/null || true
+
+          # Add sedutil packages
+          sed -i '/sedutil/d' package/Config.in
+          sed -i '/menu "System tools"/a \\tsource "package/sedutil/Config.in"' package/Config.in
+          cp -r ../../buildroot/packages/sedutil/ package/
+
           echo "=== Fixing BR2_EXTERNAL in buildroot configs ==="
-          # Add BR2_EXTERNAL to config files in scratch directory
-          for config in scratch/buildroot/64bit/.config scratch/buildroot/32bit/.config; do
+          # Add BR2_EXTERNAL to config files
+          for config in 64bit/.config 32bit/.config; do
             if [ -f "$config" ]; then
               echo "Found config: $config"
               if ! grep -q "^BR2_EXTERNAL" "$config"; then
@@ -74,8 +101,6 @@ jobs:
           done
 
           echo "=== Building PBA root ==="
-          # Build manually instead of using buildpbaroot (which has exit 0)
-          cd scratch/buildroot
           echo "Building 64bit PBA Linux system..."
           make -j$(nproc) O=64bit 2>&1 | tee 64bit/build_output.txt
           if [ ${PIPESTATUS[0]} -ne 0 ]; then
