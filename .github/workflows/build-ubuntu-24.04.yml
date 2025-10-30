@@ -82,7 +82,23 @@ jobs:
           }
 
           echo "=== Building syslinux for UEFI ==="
-          cd scratch/syslinux-*
+          SYSLINUX_DIR=$(find scratch -maxdepth 1 -type d -name 'syslinux-*' | head -n 1)
+          if [ -z "$SYSLINUX_DIR" ]; then
+            echo "ERROR: syslinux directory not found"
+            exit 1
+          fi
+          echo "Found syslinux at: $SYSLINUX_DIR"
+          cd "$SYSLINUX_DIR"
+
+          # Fix for GCC 10+ (syslinux 6.03 needs -fcommon flag)
+          echo "Patching syslinux Makefile for GCC 10+ compatibility..."
+          # Patch all Makefiles to add -fcommon flag
+          find . -name "Makefile" -o -name "*.mk" | while read makefile; do
+            sed -i 's/\(CFLAGS.*\)/\1 -fcommon/' "$makefile" 2>/dev/null || true
+          done
+          # Also set it as environment variable
+          export CFLAGS="-fcommon $CFLAGS"
+
           make -j$(nproc) efi64
           cd ../..
 
