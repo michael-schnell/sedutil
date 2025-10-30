@@ -100,9 +100,25 @@ jobs:
               echo "Creating $dir/.br-external.mk"
               touch "$dir/.br-external.mk"
 
-              # Update config to new buildroot version (updates package versions)
-              echo "Updating $config to buildroot 2021.08.3 defaults..."
-              make O=$dir olddefconfig
+              # Check for legacy options and try to fix
+              echo "Checking for legacy options in $config..."
+              if make O=$dir olddefconfig 2>&1 | tee /tmp/olddefconfig_$dir.log | grep -q "legacy"; then
+                echo "Legacy options detected, attempting to clean config..."
+                # Extract key settings we want to keep
+                grep "^BR2_x86_64=y" "$config" > "$config.new" || echo "BR2_x86_64=y" > "$config.new"
+                grep "^BR2_PACKAGE_SEDUTIL=y" "$config" >> "$config.new" || echo "BR2_PACKAGE_SEDUTIL=y" >> "$config.new"
+                grep "^BR2_PACKAGE_GNU_EFI=y" "$config" >> "$config.new" || echo "BR2_PACKAGE_GNU_EFI=y" >> "$config.new"
+                grep "^BR2_PACKAGE_BUSYBOX=y" "$config" >> "$config.new" || echo "BR2_PACKAGE_BUSYBOX=y" >> "$config.new"
+                grep "^BR2_PACKAGE_UTIL_LINUX=y" "$config" >> "$config.new" || echo "BR2_PACKAGE_UTIL_LINUX=y" >> "$config.new"
+                grep "^BR2_PACKAGE_ZIP=y" "$config" >> "$config.new" || echo "BR2_PACKAGE_ZIP=y" >> "$config.new"
+                grep "^BR2_PACKAGE_OVERRIDE_FILE=" "$config" >> "$config.new" || true
+                grep "^BR2_ROOTFS_OVERLAY=" "$config" >> "$config.new" || true
+                grep "^BR2_LINUX_KERNEL" "$config" >> "$config.new" || true
+                echo 'BR2_EXTERNAL=' >> "$config.new"
+                mv "$config.new" "$config"
+                echo "Regenerating config with olddefconfig..."
+                make O=$dir olddefconfig
+              fi
             else
               echo "Config not found: $config"
             fi
