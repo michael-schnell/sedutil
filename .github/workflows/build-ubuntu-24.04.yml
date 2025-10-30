@@ -26,7 +26,8 @@ jobs:
           sudo apt-get update
           sudo apt-get upgrade -y
           sudo apt-get install -y \
-            build-essential autoconf pkg-config libc6-dev make g++-multilib m4 libtool ncurses-dev unzip zip git python3 zlib1g-dev wget bsdmainutils automake curl bc rsync cpio nasm fakeroot dpkg-dev
+            build-essential autoconf pkg-config libc6-dev make g++-multilib m4 libtool ncurses-dev unzip zip git python3 zlib1g-dev wget bsdmainutils automake curl bc rsync cpio nasm fakeroot dpkg-dev \
+            uuid-dev libuuid1 mtools genisoimage syslinux dosfstools gdisk kpartx
 
       - name: Show git info
         run: |
@@ -43,20 +44,53 @@ jobs:
         run: |
           make -j$(nproc)
 
+      - name: Save binaries before rescue image build
+        run: |
+          mkdir -p .ci_artifacts_backup
+          cp sedutil-cli .ci_artifacts_backup/ 2>/dev/null || echo "sedutil-cli not found"
+          cp linuxpba .ci_artifacts_backup/ 2>/dev/null || echo "linuxpba not found"
+          ls -lah .ci_artifacts_backup/
+
       - name: Build rescue image (UEFI 64-bit Rescue64)
         working-directory: ./images
-        continue-on-error: true
         run: |
           echo "=== Getting resources ==="
-          ./getresources || echo "getresources failed"
+          ./getresources
+
+          echo "=== Fixing buildroot configuration ==="
+          # Fix the BR2_EXTERNAL issue by adding it to the config files
+          cd scratch/buildroot
+          for dir in 64bit 32bit; do
+            if [ -f "$dir/.config" ]; then
+              # Add BR2_EXTERNAL if not present
+              if ! grep -q "^BR2_EXTERNAL" "$dir/.config"; then
+                echo 'BR2_EXTERNAL=' >> "$dir/.config"
+              fi
+            fi
+          done
+          cd ../..
+
           echo "=== Building PBA root ==="
-          ./buildpbaroot || echo "buildpbaroot failed"
+          ./buildpbaroot
+
+          echo "=== Building syslinux for UEFI ==="
+          cd scratch/syslinux-*
+          make -j$(nproc) efi64
+          cd ../..
+
           echo "=== Building UEFI64 ==="
-          ./buildUEFI64 || echo "buildUEFI64 failed"
+          ./buildUEFI64
+
           echo "=== Building rescue image ==="
-          ./buildrescue Rescue64 || echo "buildrescue failed"
+          ./buildrescue Rescue64
+
           echo "=== Listing built images ==="
           ls -lah *.img* 2>/dev/null || echo "No image files found"
+
+      - name: Restore binaries after rescue image build
+        run: |
+          cp .ci_artifacts_backup/* . 2>/dev/null || echo "No binaries to restore"
+          ls -lah sedutil-cli linuxpba 2>/dev/null || echo "Binaries not restored"
 
       - name: Locate produced artifacts
         id: locate
