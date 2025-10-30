@@ -94,8 +94,21 @@ jobs:
         if: steps.locate.outputs.binaries == 'true'
         run: |
           mkdir -p debpkg/DEBIAN debpkg/usr/local/bin
-          VERSION="${GITHUB_REF_NAME:-0.0.0}"
-          VERSION="${VERSION#v}"
+
+          # Determine version based on context
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            # Tag push - use tag name
+            VERSION="${GITHUB_REF_NAME#v}"
+          elif [[ -n "$GITHUB_HEAD_REF" ]]; then
+            # Pull request - use PR number or branch name
+            VERSION="0.0.0-pr${GITHUB_HEAD_REF//\//-}"
+          else
+            # Direct push to branch - use commit SHA
+            VERSION="0.0.0-${GITHUB_SHA:0:7}"
+          fi
+
+          echo "Using version: $VERSION"
+
           echo "Package: sedutil" > debpkg/DEBIAN/control
           echo "Version: ${VERSION}" >> debpkg/DEBIAN/control
           echo "Section: base" >> debpkg/DEBIAN/control
