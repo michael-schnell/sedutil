@@ -82,7 +82,7 @@ jobs:
           # Fix for GCC 10+ (syslinux 6.03 multiple definition errors)
           echo "Applying GCC 10+ compatibility patch..."
           cd "$SYSLINUX_DIR"
-          patch -p1 < ../../../syslinux-gcc10-muldefs.patch
+          patch -p1 < ../../syslinux-gcc10-muldefs.patch
 
           make -j$(nproc) efi64
           cd ../..
