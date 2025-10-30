@@ -63,7 +63,7 @@ jobs:
           rm -rf buildroot
           git clone ${BUILDROOT:-git://git.buildroot.net/buildroot}
           cd buildroot
-          git checkout -b PBABUILD ${BUILDROOT_TAG:-2021.02.12}
+          git checkout -b PBABUILD ${BUILDROOT_TAG:-2020.02.12}
           git reset --hard
           git clean -df
 
@@ -95,11 +95,6 @@ jobs:
                 echo 'BR2_EXTERNAL=' >> "$config"
               else
                 echo "BR2_EXTERNAL already exists in $config"
-              fi
-              # Disable hash checking for compatibility with newer buildroot
-              if ! grep -q "^BR2_ENFORCE_CHECK_HASH" "$config"; then
-                echo "Disabling hash checking in $config"
-                echo '# BR2_ENFORCE_CHECK_HASH is not set' >> "$config"
               fi
               # Create empty .br-external.mk file
               echo "Creating $dir/.br-external.mk"
