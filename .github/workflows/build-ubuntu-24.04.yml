@@ -96,6 +96,11 @@ jobs:
               else
                 echo "BR2_EXTERNAL already exists in $config"
               fi
+              # Disable hash checking for compatibility with newer buildroot
+              if ! grep -q "^BR2_ENFORCE_CHECK_HASH" "$config"; then
+                echo "Disabling hash checking in $config"
+                echo '# BR2_ENFORCE_CHECK_HASH is not set' >> "$config"
+              fi
               # Create empty .br-external.mk file
               echo "Creating $dir/.br-external.mk"
               touch "$dir/.br-external.mk"
