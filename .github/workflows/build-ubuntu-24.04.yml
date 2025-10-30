@@ -1,0 +1,153 @@
+name: Build sedutil (Ubuntu 24.04, x86_64)
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+env:
+  DEB_MAINTAINER: "CI <ci@example.com>"
+
+jobs:
+  build-and-package:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up APT and install prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get upgrade -y
+          sudo apt-get install -y \
+            build-essential autoconf pkg-config libc6-dev make g++-multilib m4 libtool ncurses-dev unzip zip git python3 zlib1g-dev wget bsdmainutils automake curl bc rsync cpio nasm fakeroot dpkg-dev
+
+      - name: Show git info
+        run: |
+          echo "Ref: $GITHUB_REF"
+          echo "SHA: $GITHUB_SHA"
+          git --no-pager log -1 --pretty=oneline || true
+
+      - name: Prepare build (autoreconf + configure)
+        run: |
+          autoreconf --install || true
+          ./configure || ( (cat config.log || true) && exit 1 )
+
+      - name: Build all
+        run: |
+          make -j$(nproc)
+
+      - name: Build rescue image (UEFI 64-bit Rescue64)
+        working-directory: ./images
+        run: |
+          ./getresources || true
+          ./buildUEFI64 || true
+          ./buildrescue Rescue64 || true
+
+      - name: Locate produced artifacts
+        id: locate
+        run: |
+          mkdir -p .ci_artifacts
+
+          # Collect rescue image (prefer gz if present)
+          RESCUE_GZ=$(ls images/*Rescue*64*.img.gz 2>/dev/null || true)
+          RESCUE_IMG=$(ls images/*Rescue*64*.img 2>/dev/null || true)
+
+          if [ -n "$RESCUE_GZ" ]; then
+            cp "$RESCUE_GZ" .ci_artifacts/ || true
+            echo "rescue_file=$(basename $RESCUE_GZ)" >> $GITHUB_OUTPUT
+          elif [ -n "$RESCUE_IMG" ]; then
+            gzip -c "$RESCUE_IMG" > .ci_artifacts/$(basename $RESCUE_IMG).gz || true
+            echo "rescue_file=$(basename $RESCUE_IMG).gz" >> $GITHUB_OUTPUT
+          else
+            echo "rescue_file=" >> $GITHUB_OUTPUT
+            echo "No rescue image found in images/" >&2
+          fi
+
+          # Collect sedutil binaries any location
+          BINFILES=$(find . -type f -name 'sedutil-cli' -o -name 'sedutil-sleep' 2>/dev/null || true)
+          if [ -n "$BINFILES" ]; then
+            for f in $BINFILES; do
+              cp "$f" .ci_artifacts/ || true
+            done
+            echo "binaries=true" >> $GITHUB_OUTPUT
+          else
+            echo "binaries=false" >> $GITHUB_OUTPUT
+            echo "No sedutil binaries found by name 'sedutil-cli' or 'sedutil-sleep'" >&2
+          fi
+
+      - name: Create tar.gz artifact
+        if: steps.locate.outputs.binaries == 'true'
+        run: |
+          cd .ci_artifacts || exit 1
+          TAR_NAME="sedutil-ubuntu-24.04-x86_64.tar.gz"
+          tar -czf "$TAR_NAME" ./*sedutil* || true
+          ls -lah "$TAR_NAME"
+
+      - name: Create .deb package
+        if: steps.locate.outputs.binaries == 'true'
+        run: |
+          mkdir -p debpkg/DEBIAN debpkg/usr/local/bin
+          cat > debpkg/DEBIAN/control << 'EOF'
+          Package: sedutil
+          Version: ${GITHUB_REF_NAME:-0.0.0}
+          Section: base
+          Priority: optional
+          Architecture: amd64
+          Maintainer: ${DEB_MAINTAINER}
+          Description: sedutil OPAL drive utilities
+          EOF
+          cp .ci_artifacts/sedutil-cli debpkg/usr/local/bin/ || true
+          cp .ci_artifacts/sedutil-sleep debpkg/usr/local/bin/ 2>/dev/null || true
+          fakeroot dpkg-deb --build debpkg sedutil-ubuntu-24.04-x86_64.deb || (ls -R debpkg && false)
+          ls -lah sedutil-ubuntu-24.04-x86_64.deb || true
+
+      - name: Move final artifacts into artifacts dir
+        run: |
+          mkdir -p artifacts
+          if [ -f .ci_artifacts/sedutil-ubuntu-24.04-x86_64.tar.gz ]; then
+            mv .ci_artifacts/sedutil-ubuntu-24.04-x86_64.tar.gz artifacts/
+          fi
+          if [ -f sedutil-ubuntu-24.04-x86_64.deb ]; then
+            mv sedutil-ubuntu-24.04-x86_64.deb artifacts/
+          fi
+          # rescue image
+          if [ -n "${{ steps.locate.outputs.rescue_file }}" ]; then
+            cp .ci_artifacts/${{ steps.locate.outputs.rescue_file }} artifacts/ 2>/dev/null || true
+          else
+            # try to find any gz in images/
+            cp images/*Rescue*64*.img.gz artifacts/ 2>/dev/null || true
+          fi
+          ls -lah artifacts || true
+
+      - name: Upload CI artifacts (Actions run)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sedutil-artifacts
+          path: artifacts/
+
+      - name: Smoke test binary
+        if: steps.locate.outputs.binaries == 'true'
+        run: |
+          file artifacts/*sedutil* || true
+          chmod +x artifacts/sedutil-cli || true
+          ./artifacts/sedutil-cli --version || true
+
+      - name: Create GitHub Release and publish artifacts
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup (list)
+        run: |
+          echo "Done. Artifacts in artifacts/ and uploaded to release if tag pushed."
+
