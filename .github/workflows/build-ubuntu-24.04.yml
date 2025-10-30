@@ -57,29 +57,19 @@ jobs:
           echo "=== Getting resources ==="
           ./getresources
 
-          echo "=== Building PBA root ==="
-          ./buildpbaroot || {
-            echo "buildpbaroot failed, checking for BR2_EXTERNAL issue..."
-            # Fix the BR2_EXTERNAL issue by adding it to the config files
-            if [ -d scratch/buildroot ]; then
-              cd scratch/buildroot
-              for dir in 64bit 32bit; do
-                if [ -f "$dir/.config" ]; then
-                  # Add BR2_EXTERNAL if not present
-                  if ! grep -q "^BR2_EXTERNAL" "$dir/.config"; then
-                    echo "Adding BR2_EXTERNAL to $dir/.config"
-                    echo 'BR2_EXTERNAL=' >> "$dir/.config"
-                  fi
-                fi
-              done
-              cd ../..
-              echo "Retrying buildpbaroot..."
-              ./buildpbaroot
-            else
-              echo "scratch/buildroot not found, cannot fix"
-              exit 1
+          echo "=== Pre-configuring buildroot configs with BR2_EXTERNAL ==="
+          # Add BR2_EXTERNAL to config files before buildpbaroot runs
+          for config in buildroot/64bit/.config buildroot/32bit/.config; do
+            if [ -f "$config" ]; then
+              if ! grep -q "^BR2_EXTERNAL" "$config"; then
+                echo "Adding BR2_EXTERNAL to $config"
+                echo 'BR2_EXTERNAL=' >> "$config"
+              fi
             fi
-          }
+          done
+
+          echo "=== Building PBA root ==="
+          ./buildpbaroot
 
           echo "=== Building syslinux for UEFI ==="
           SYSLINUX_DIR=$(find scratch -maxdepth 1 -type d -name 'syslinux-*' | head -n 1)
@@ -88,12 +78,14 @@ jobs:
             exit 1
           fi
           echo "Found syslinux at: $SYSLINUX_DIR"
-          cd "$SYSLINUX_DIR"
 
           # Fix for GCC 10+ (syslinux 6.03 needs -fcommon flag)
           echo "Patching syslinux Makefile for GCC 10+ compatibility..."
+          cd "$SYSLINUX_DIR"
           # Apply patch to fix multiple definition errors
-          sed -i 's/^GCCWARN\s*:=\s*\(.*\)/GCCWARN := \1 -fcommon/' MCONFIG
+          if [ -f MCONFIG ]; then
+            sed -i 's/^GCCWARN\s*:=\s*\(.*\)/GCCWARN := \1 -fcommon/' MCONFIG
+          fi
           # Set environment variable as fallback
           export CFLAGS="-fcommon"
           export CXXFLAGS="-fcommon"
