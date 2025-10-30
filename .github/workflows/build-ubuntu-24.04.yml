@@ -101,7 +101,9 @@ jobs:
             VERSION="${GITHUB_REF_NAME#v}"
           elif [[ -n "$GITHUB_HEAD_REF" ]]; then
             # Pull request - use PR number or branch name
+            # Replace invalid characters (/, _) with hyphens for Debian version compatibility
             VERSION="0.0.0-pr${GITHUB_HEAD_REF//\//-}"
+            VERSION="${VERSION//_/-}"
           else
             # Direct push to branch - use commit SHA
             VERSION="0.0.0-${GITHUB_SHA:0:7}"
