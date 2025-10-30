@@ -63,7 +63,7 @@ jobs:
           rm -rf buildroot
           git clone ${BUILDROOT:-git://git.buildroot.net/buildroot}
           cd buildroot
-          git checkout -b PBABUILD ${BUILDROOT_TAG:-2020.02.12}
+          git checkout -b PBABUILD ${BUILDROOT_TAG:-2021.08.4}
           git reset --hard
           git clean -df
 
