@@ -88,6 +88,21 @@ jobs:
           # Fix line endings for buildroot package files
           find package/sedutil/ -type f -exec dos2unix {} \; 2>/dev/null || find package/sedutil/ -type f -exec sed -i 's/\r$//' {} \;
 
+          echo "=== Creating sedutil distribution tarball ==="
+          # Go back to workspace root to run make dist
+          cd ../../..
+          autoreconf
+          ./configure
+          make dist
+          # Copy tarball to buildroot dl/ directory and extract it
+          mkdir -p images/scratch/buildroot/dl/
+          cp sedutil-*.tar.gz images/scratch/buildroot/dl/
+          cd images/scratch/buildroot/dl
+          tar xvfz sedutil-*.tar.gz
+          ls -lah
+          ls -lah sedutil-*/ || echo "ERROR: sedutil directory not created"
+          cd ..
+
           echo "=== Fixing BR2_EXTERNAL in buildroot configs ==="
           # Add BR2_EXTERNAL to config files and create .br-external.mk files
           for dir in 64bit 32bit; do
