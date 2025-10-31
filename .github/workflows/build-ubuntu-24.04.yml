@@ -27,7 +27,7 @@ jobs:
           sudo apt-get upgrade -y
           sudo apt-get install -y \
             build-essential autoconf pkg-config libc6-dev make g++-multilib m4 libtool ncurses-dev unzip zip git python3 zlib1g-dev wget bsdmainutils automake curl bc rsync cpio nasm fakeroot dpkg-dev \
-            uuid-dev libuuid1 mtools genisoimage syslinux dosfstools gdisk kpartx
+            uuid-dev libuuid1 mtools genisoimage syslinux dosfstools gdisk kpartx linux-libc-dev dos2unix
 
       - name: Show git info
         run: |
@@ -58,6 +58,7 @@ jobs:
           ./getresources
 
           echo "=== Setting up buildroot (clone and copy configs) ==="
+          mkdir -p scratch
           cd scratch
           # Clone buildroot
           rm -rf buildroot
@@ -79,10 +80,13 @@ jobs:
           cp ../../buildroot/32bit/* 32bit/ 2>/dev/null || true
           cp -r ../../buildroot/32bit/overlay 32bit/ 2>/dev/null || true
 
-          # Add sedutil packages
+          # Add sedutil packages (note: repository has packages/ with 's', buildroot has package/ without 's')
           sed -i '/sedutil/d' package/Config.in
           sed -i '/menu "System tools"/a \\tsource "package/sedutil/Config.in"' package/Config.in
           cp -r ../../buildroot/packages/sedutil/ package/
+
+          # Fix line endings for buildroot package files
+          find package/sedutil/ -type f -exec dos2unix {} \; 2>/dev/null || find package/sedutil/ -type f -exec sed -i 's/\r$//' {} \;
 
           echo "=== Fixing BR2_EXTERNAL in buildroot configs ==="
           # Add BR2_EXTERNAL to config files and create .br-external.mk files
@@ -100,25 +104,13 @@ jobs:
               echo "Creating $dir/.br-external.mk"
               touch "$dir/.br-external.mk"
 
-              # Check for legacy options and try to fix
-              echo "Checking for legacy options in $config..."
-              if make O=$dir olddefconfig 2>&1 | tee /tmp/olddefconfig_$dir.log | grep -q "legacy"; then
-                echo "Legacy options detected, attempting to clean config..."
-                # Extract key settings we want to keep
-                grep "^BR2_x86_64=y" "$config" > "$config.new" || echo "BR2_x86_64=y" > "$config.new"
-                grep "^BR2_PACKAGE_SEDUTIL=y" "$config" >> "$config.new" || echo "BR2_PACKAGE_SEDUTIL=y" >> "$config.new"
-                grep "^BR2_PACKAGE_GNU_EFI=y" "$config" >> "$config.new" || echo "BR2_PACKAGE_GNU_EFI=y" >> "$config.new"
-                grep "^BR2_PACKAGE_BUSYBOX=y" "$config" >> "$config.new" || echo "BR2_PACKAGE_BUSYBOX=y" >> "$config.new"
-                grep "^BR2_PACKAGE_UTIL_LINUX=y" "$config" >> "$config.new" || echo "BR2_PACKAGE_UTIL_LINUX=y" >> "$config.new"
-                grep "^BR2_PACKAGE_ZIP=y" "$config" >> "$config.new" || echo "BR2_PACKAGE_ZIP=y" >> "$config.new"
-                grep "^BR2_PACKAGE_OVERRIDE_FILE=" "$config" >> "$config.new" || true
-                grep "^BR2_ROOTFS_OVERLAY=" "$config" >> "$config.new" || true
-                grep "^BR2_LINUX_KERNEL" "$config" >> "$config.new" || true
-                echo 'BR2_EXTERNAL=' >> "$config.new"
-                mv "$config.new" "$config"
-                echo "Regenerating config with olddefconfig..."
-                make O=$dir olddefconfig
-              fi
+              # Run olddefconfig to set defaults for new options
+              echo "Running olddefconfig for $dir..."
+              make O=$dir olddefconfig
+
+              # Remove legacy configuration marker that olddefconfig may have added
+              echo "Removing BR2_LEGACY marker from $config..."
+              sed -i '/BR2_LEGACY/d' "$config"
             else
               echo "Config not found: $config"
             fi
@@ -126,7 +118,10 @@ jobs:
 
           echo "=== Building PBA root ==="
           echo "Building 64bit PBA Linux system..."
-          make -j$(nproc) O=64bit 2>&1 | tee 64bit/build_output.txt
+          # Force truly sequential builds by setting MAKEFLAGS to prevent nested parallel jobs
+          # This is needed because glibc has race conditions even with -j1 at the top level
+          export MAKEFLAGS="-j1"
+          make -j1 O=64bit 2>&1 | tee 64bit/build_output.txt
           if [ ${PIPESTATUS[0]} -ne 0 ]; then
             echo "ERROR: 64bit build failed"
             tail -100 64bit/build_output.txt
@@ -137,7 +132,9 @@ jobs:
           ls -lah 64bit/target/sbin/ || echo "64bit/target/sbin/ not found"
 
           echo "Building 32bit PBA Linux system..."
-          make -j$(nproc) O=32bit 2>&1 | tee 32bit/build_output.txt
+          # Force truly sequential builds by setting MAKEFLAGS to prevent nested parallel jobs
+          export MAKEFLAGS="-j1"
+          make -j1 O=32bit 2>&1 | tee 32bit/build_output.txt
           if [ ${PIPESTATUS[0]} -ne 0 ]; then
             echo "ERROR: 32bit build failed"
             tail -100 32bit/build_output.txt
