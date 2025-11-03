@@ -190,9 +190,37 @@ Doxygen/
 /images/*/*
 !/images/buildroot/
 !/images/buildroot/*
+# Ignore cloned buildroot repository files (keep only 32bit/, 64bit/, packages/, syslinux.cfg)
+/images/buildroot/arch/
+/images/buildroot/board/
+/images/buildroot/boot/
+/images/buildroot/configs/
+/images/buildroot/docs/
+/images/buildroot/fs/
+/images/buildroot/linux/
+/images/buildroot/package/
+/images/buildroot/support/
+/images/buildroot/system/
+/images/buildroot/toolchain/
+/images/buildroot/utils/
+/images/buildroot/.*/
+/images/buildroot/Makefile*
+/images/buildroot/Config.in*
+/images/buildroot/CHANGES
+/images/buildroot/COPYING
+/images/buildroot/DEVELOPERS
+/images/buildroot/README
 /LinuxPBA/dist/
 /linux/CLI/dist/
 # inno installer output
 windows/installer/Output/
 # hacked exe files for different flavors
 windows/installer/exe
+
+# Local build artifacts
+.ci_artifacts/
+.ci_artifacts_backup/
+sedutil-local-*.tar.gz
+sedutil-local-*.deb
+debpkg/
+*.log

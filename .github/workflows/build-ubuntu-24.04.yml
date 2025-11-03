@@ -173,17 +173,30 @@ jobs:
           cd "$SYSLINUX_DIR"
           patch -p1 < ../../syslinux-gcc10-muldefs.patch
 
+          # Build both BIOS and EFI64 syslinux
+          echo "Building syslinux BIOS..."
+          make -j$(nproc) bios
+          echo "Building syslinux EFI64..."
           make -j$(nproc) efi64
           cd ../..
+
+          echo "=== Building BIOS32 ==="
+          ./buildbios
 
           echo "=== Building UEFI64 ==="
           ./buildUEFI64
 
-          echo "=== Building rescue image ==="
+          echo "=== Building rescue images ==="
+          echo "Building Rescue32..."
+          ./buildrescue Rescue32
+          echo "Building Rescue64..."
           ./buildrescue Rescue64
 
           echo "=== Listing built images ==="
-          ls -lah *.img* 2>/dev/null || echo "No image files found"
+          ls -lah BIOS32/*.img* 2>/dev/null || echo "No BIOS32 image files found"
+          ls -lah UEFI64/*.img* 2>/dev/null || echo "No UEFI64 image files found"
+          ls -lah RESCUE32/*.img* 2>/dev/null || echo "No RESCUE32 image files found"
+          ls -lah RESCUE64/*.img* 2>/dev/null || echo "No RESCUE64 image files found"
 
       - name: Restore binaries after rescue image build
         run: |
@@ -195,24 +208,28 @@ jobs:
         run: |
           mkdir -p .ci_artifacts
 
-          echo "=== Looking for rescue images in images/ ==="
-          ls -lah images/*.img* 2>/dev/null || echo "No .img files found"
+          echo "=== Looking for images in images/ ==="
+          ls -lah images/*/*.img* 2>/dev/null || echo "No .img files found"
 
-          # Collect rescue image (prefer gz if present)
-          RESCUE_GZ=$(ls images/*Rescue*64*.img.gz 2>/dev/null || true)
-          RESCUE_IMG=$(ls images/*Rescue*64*.img 2>/dev/null || true)
+          # Collect all image files (BIOS32, UEFI64, RESCUE32, RESCUE64)
+          echo "Collecting BIOS32 images..."
+          find images/BIOS32 -name "*.img.gz" -exec cp {} .ci_artifacts/ \; 2>/dev/null || echo "No BIOS32 images found"
 
-          if [ -n "$RESCUE_GZ" ]; then
-            echo "Found rescue image (compressed): $RESCUE_GZ"
-            cp "$RESCUE_GZ" .ci_artifacts/ || true
-            echo "rescue_file=$(basename $RESCUE_GZ)" >> $GITHUB_OUTPUT
-          elif [ -n "$RESCUE_IMG" ]; then
-            echo "Found rescue image (uncompressed): $RESCUE_IMG, compressing..."
-            gzip -c "$RESCUE_IMG" > .ci_artifacts/$(basename $RESCUE_IMG).gz || true
-            echo "rescue_file=$(basename $RESCUE_IMG).gz" >> $GITHUB_OUTPUT
+          echo "Collecting UEFI64 images..."
+          find images/UEFI64 -name "*.img.gz" -exec cp {} .ci_artifacts/ \; 2>/dev/null || echo "No UEFI64 images found"
+
+          echo "Collecting RESCUE32 images..."
+          find images/RESCUE32 -name "*.img.gz" -exec cp {} .ci_artifacts/ \; 2>/dev/null || echo "No RESCUE32 images found"
+
+          echo "Collecting RESCUE64 images..."
+          find images/RESCUE64 -name "*.img.gz" -exec cp {} .ci_artifacts/ \; 2>/dev/null || echo "No RESCUE64 images found"
+
+          # Check if any images were collected
+          if ls .ci_artifacts/*.img.gz 1> /dev/null 2>&1; then
+            echo "images=true" >> $GITHUB_OUTPUT
           else
-            echo "rescue_file=" >> $GITHUB_OUTPUT
-            echo " No rescue image found in images/" >&2
+            echo "images=false" >> $GITHUB_OUTPUT
+            echo "WARNING: No image files collected" >&2
           fi
 
           echo ""
