@@ -117,74 +117,68 @@ if [[ "$1" != "--skip-rescue" ]]; then
 
     echo "=== Setting up buildroot (clone and copy configs) ==="
     cd scratch
-    # Clone buildroot
+    # Clone buildroot (completely fresh)
+    echo "=== Removing old buildroot directory ==="
     rm -rf buildroot
+
+    echo "=== Cloning buildroot ==="
     git clone ${BUILDROOT:-git://git.buildroot.net/buildroot}
     cd buildroot
     git checkout -b PBABUILD ${BUILDROOT_TAG:-2021.08.3}
     git reset --hard
     git clean -df
 
-    # Copy config files for 64bit
-    mkdir 64bit
-    cp ../../buildroot/64bit/.config 64bit/
-    cp ../../buildroot/64bit/* 64bit/ 2>/dev/null || true
-    cp -r ../../buildroot/64bit/overlay 64bit/ 2>/dev/null || true
-
-    # Copy config files for 32bit
-    mkdir 32bit
-    cp ../../buildroot/32bit/.config 32bit/
-    cp ../../buildroot/32bit/* 32bit/ 2>/dev/null || true
-    cp -r ../../buildroot/32bit/overlay 32bit/ 2>/dev/null || true
-
-    # Add sedutil packages
+    # Add sedutil packages first
+    echo "=== Adding sedutil packages ==="
     sed -i '/sedutil/d' package/Config.in
     sed -i '/menu "System tools"/a \\tsource "package/sedutil/Config.in"' package/Config.in
     cp -r ../../buildroot/packages/sedutil/ package/
 
-    echo "=== Cleaning old build directories ==="
-    # Remove old build directories to ensure clean build
-    rm -rf 64bit/build 64bit/host 64bit/target 64bit/images 2>/dev/null || true
-    rm -rf 32bit/build 32bit/host 32bit/target 32bit/images 2>/dev/null || true
+    # Setup 64bit build directory
+    echo "=== Setting up 64bit build directory ==="
+    mkdir -p 64bit
+    cp ../../buildroot/64bit/.config 64bit/.config.orig
+    cp ../../buildroot/64bit/* 64bit/ 2>/dev/null || true
+    cp -r ../../buildroot/64bit/overlay 64bit/ 2>/dev/null || true
 
-    echo "=== Fixing BR2_EXTERNAL in buildroot configs ==="
-    # Add BR2_EXTERNAL to config files and create .br-external.mk files
-    for dir in 64bit 32bit; do
-        config="$dir/.config"
-        if [ -f "$config" ]; then
-            echo "Found config: $config"
+    # Clean the 64bit config file
+    echo "Cleaning 64bit config..."
+    grep -v "^BR2_DEPRECATED" 64bit/.config.orig | grep -v "^BR2_LEGACY" > 64bit/.config || cp 64bit/.config.orig 64bit/.config
+    echo 'BR2_EXTERNAL=' >> 64bit/.config
+    touch 64bit/.br-external.mk
 
-            # Remove any legacy options from the config file
-            echo "Removing legacy options from $config..."
-            grep -v "^BR2_DEPRECATED" "$config" > "$config.tmp" || true
-            grep -v "^BR2_LEGACY" "$config.tmp" > "$config.new" || true
-            mv "$config.new" "$config"
-            rm -f "$config.tmp"
+    # Generate fresh config for 64bit
+    echo "Generating fresh 64bit config..."
+    make O=64bit olddefconfig
 
-            if ! grep -q "^BR2_EXTERNAL" "$config"; then
-                echo "Adding BR2_EXTERNAL to $config"
-                echo 'BR2_EXTERNAL=' >> "$config"
-            else
-                echo "BR2_EXTERNAL already exists in $config"
-            fi
+    # Ensure BR2_EXTERNAL is still there
+    if ! grep -q "^BR2_EXTERNAL" 64bit/.config; then
+        echo 'BR2_EXTERNAL=' >> 64bit/.config
+    fi
 
-            # Create empty .br-external.mk file
-            echo "Creating $dir/.br-external.mk"
-            touch "$dir/.br-external.mk"
+    # Setup 32bit build directory
+    echo "=== Setting up 32bit build directory ==="
+    mkdir -p 32bit
+    cp ../../buildroot/32bit/.config 32bit/.config.orig
+    cp ../../buildroot/32bit/* 32bit/ 2>/dev/null || true
+    cp -r ../../buildroot/32bit/overlay 32bit/ 2>/dev/null || true
 
-            # Run olddefconfig to regenerate config with current buildroot version
-            echo "Running olddefconfig to regenerate $config..."
-            make O=$dir olddefconfig 2>&1 | tee /tmp/olddefconfig_$dir.log || true
+    # Clean the 32bit config file
+    echo "Cleaning 32bit config..."
+    grep -v "^BR2_DEPRECATED" 32bit/.config.orig | grep -v "^BR2_LEGACY" > 32bit/.config || cp 32bit/.config.orig 32bit/.config
+    echo 'BR2_EXTERNAL=' >> 32bit/.config
+    touch 32bit/.br-external.mk
 
-            # Verify BR2_EXTERNAL is still set after olddefconfig
-            if ! grep -q "^BR2_EXTERNAL" "$config"; then
-                echo "Re-adding BR2_EXTERNAL to $config after olddefconfig"
-                echo 'BR2_EXTERNAL=' >> "$config"
-            fi
-        else
-            echo "Config not found: $config"
-        fi
-    done
+    # Generate fresh config for 32bit
+    echo "Generating fresh 32bit config..."
+    make O=32bit olddefconfig
+
+    # Ensure BR2_EXTERNAL is still there
+    if ! grep -q "^BR2_EXTERNAL" 32bit/.config; then
+        echo 'BR2_EXTERNAL=' >> 32bit/.config
+    fi
+
+    echo "=== Config setup complete ==="
 
     echo "=== Building PBA root ==="
     echo "Building 64bit PBA Linux system..."
