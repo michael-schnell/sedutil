@@ -1,12 +1,12 @@
---- a/bios/core/Makefile
-+++ b/bios/core/Makefile
+--- a/core/Makefile
++++ b/core/Makefile
 @@ -164,7 +164,7 @@ LDSCRIPT = $(SRC)/$(ARCH)/syslinux.ld
 
  %.elf: %.o $(LIBDEP) $(LDSCRIPT) $(AUXLIBS)
- 	$(LD) $(LDFLAGS) -Bsymbolic -pie -E --hash-style=gnu -T $(LDSCRIPT) -M -o $@ $< \
--		--start-group $(LIBS) --whole-archive $(AUXLIBS) --end-group \
-+		--start-group $(LIBS) --whole-archive $(AUXLIBS) --end-group --no-dynamic-linker --no-warn-rwx-segments \
+ 	$(LD) $(LDFLAGS) -Bsymbolic $(LD_PIE) -E --hash-style=gnu -T $(LDSCRIPT) -M -o $@ $< \
+-		--start-group $(LIBS) $(subst $(*F).elf,lib$(*F).a,$@) --end-group \
++		--start-group $(LIBS) $(subst $(*F).elf,lib$(*F).a,$@) --end-group --no-dynamic-linker --no-warn-rwx-segments \
  		> $(@:.elf=.map)
- 	$(OBJCOPY) --strip-debug --strip-unneeded $@ $@.tmp
- 	$(OBJCOPY) --add-gnu-debuglink=$@ $@.tmp
+ 	$(OBJDUMP) -h $@ > $(@:.elf=.sec)
+ 	$(PERL) $(SRC)/lstadjust.pl $(@:.elf=.lsr) $(@:.elf=.sec) $(@:.elf=.lst)
 
