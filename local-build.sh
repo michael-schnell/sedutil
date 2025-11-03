@@ -142,24 +142,38 @@ if [[ "$1" != "--skip-rescue" ]]; then
     sed -i '/menu "System tools"/a \\tsource "package/sedutil/Config.in"' package/Config.in
     cp -r ../../buildroot/packages/sedutil/ package/
 
+    echo "=== Cleaning old build directories ==="
+    # Remove old build directories to ensure clean build
+    rm -rf 64bit/build 64bit/host 64bit/target 64bit/images 2>/dev/null || true
+    rm -rf 32bit/build 32bit/host 32bit/target 32bit/images 2>/dev/null || true
+
     echo "=== Fixing BR2_EXTERNAL in buildroot configs ==="
     # Add BR2_EXTERNAL to config files and create .br-external.mk files
     for dir in 64bit 32bit; do
         config="$dir/.config"
         if [ -f "$config" ]; then
             echo "Found config: $config"
+
+            # Remove any legacy options from the config file
+            echo "Removing legacy options from $config..."
+            grep -v "^BR2_DEPRECATED" "$config" > "$config.tmp" || true
+            grep -v "^BR2_LEGACY" "$config.tmp" > "$config.new" || true
+            mv "$config.new" "$config"
+            rm -f "$config.tmp"
+
             if ! grep -q "^BR2_EXTERNAL" "$config"; then
                 echo "Adding BR2_EXTERNAL to $config"
                 echo 'BR2_EXTERNAL=' >> "$config"
             else
                 echo "BR2_EXTERNAL already exists in $config"
             fi
+
             # Create empty .br-external.mk file
             echo "Creating $dir/.br-external.mk"
             touch "$dir/.br-external.mk"
 
-            # Run olddefconfig to clean up any legacy options
-            echo "Running olddefconfig to clean up legacy options in $config..."
+            # Run olddefconfig to regenerate config with current buildroot version
+            echo "Running olddefconfig to regenerate $config..."
             make O=$dir olddefconfig 2>&1 | tee /tmp/olddefconfig_$dir.log || true
 
             # Verify BR2_EXTERNAL is still set after olddefconfig
