@@ -141,15 +141,22 @@ if [[ "$1" != "--skip-rescue" ]]; then
     cp ../../buildroot/64bit/* 64bit/ 2>/dev/null || true
     cp -r ../../buildroot/64bit/overlay 64bit/ 2>/dev/null || true
 
-    # Clean the 64bit config file
+    # Clean the 64bit config file - remove legacy/deprecated markers
     echo "Cleaning 64bit config..."
     grep -v "^BR2_DEPRECATED" 64bit/.config.orig | grep -v "^BR2_LEGACY" > 64bit/.config || cp 64bit/.config.orig 64bit/.config
+
+    # Add BR2_EXTERNAL before running olddefconfig
     echo 'BR2_EXTERNAL=' >> 64bit/.config
     touch 64bit/.br-external.mk
 
     # Generate fresh config for 64bit
     echo "Generating fresh 64bit config..."
     make O=64bit olddefconfig
+
+    # Remove any legacy markers that olddefconfig added
+    echo "Removing legacy markers from 64bit config..."
+    sed -i '/^BR2_LEGACY/d' 64bit/.config
+    sed -i '/^BR2_DEPRECATED/d' 64bit/.config
 
     # Ensure BR2_EXTERNAL is still there
     if ! grep -q "^BR2_EXTERNAL" 64bit/.config; then
@@ -163,15 +170,22 @@ if [[ "$1" != "--skip-rescue" ]]; then
     cp ../../buildroot/32bit/* 32bit/ 2>/dev/null || true
     cp -r ../../buildroot/32bit/overlay 32bit/ 2>/dev/null || true
 
-    # Clean the 32bit config file
+    # Clean the 32bit config file - remove legacy/deprecated markers
     echo "Cleaning 32bit config..."
     grep -v "^BR2_DEPRECATED" 32bit/.config.orig | grep -v "^BR2_LEGACY" > 32bit/.config || cp 32bit/.config.orig 32bit/.config
+
+    # Add BR2_EXTERNAL before running olddefconfig
     echo 'BR2_EXTERNAL=' >> 32bit/.config
     touch 32bit/.br-external.mk
 
     # Generate fresh config for 32bit
     echo "Generating fresh 32bit config..."
     make O=32bit olddefconfig
+
+    # Remove any legacy markers that olddefconfig added
+    echo "Removing legacy markers from 32bit config..."
+    sed -i '/^BR2_LEGACY/d' 32bit/.config
+    sed -i '/^BR2_DEPRECATED/d' 32bit/.config
 
     # Ensure BR2_EXTERNAL is still there
     if ! grep -q "^BR2_EXTERNAL" 32bit/.config; then
