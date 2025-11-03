@@ -173,6 +173,10 @@ jobs:
           cd "$SYSLINUX_DIR"
           patch -p1 < ../../syslinux-gcc10-muldefs.patch
 
+          # Fix for binutils 2.39+ (PHDR segment not covered by LOAD segment)
+          echo "Applying binutils 2.39+ compatibility patch..."
+          patch -p1 < ../../syslinux-binutils-2.39.patch
+
           # Build both BIOS and EFI64 syslinux
           echo "Building syslinux BIOS..."
           make -j$(nproc) bios

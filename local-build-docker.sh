@@ -139,6 +139,31 @@ echo "Step 7: ./getresources"
 ./getresources
 
 echo ""
+echo "Step 7b: Build syslinux with patches"
+SYSLINUX_DIR=$(find scratch -maxdepth 1 -type d -name "syslinux-*" | head -n 1)
+if [ -z "$SYSLINUX_DIR" ]; then
+    echo "ERROR: syslinux directory not found"
+    exit 1
+fi
+echo "Found syslinux at: $SYSLINUX_DIR"
+
+# Apply GCC 10+ compatibility patch
+echo "Applying GCC 10+ compatibility patch..."
+cd "$SYSLINUX_DIR"
+patch -p1 < ../../syslinux-gcc10-muldefs.patch
+
+# Apply binutils 2.39+ compatibility patch
+echo "Applying binutils 2.39+ compatibility patch..."
+patch -p1 < ../../syslinux-binutils-2.39.patch
+
+# Build syslinux
+echo "Building syslinux BIOS..."
+make -j$(nproc) bios
+echo "Building syslinux EFI64..."
+make -j$(nproc) efi64
+cd ../..
+
+echo ""
 echo "Step 8: ./buildpbaroot"
 ./buildpbaroot
 
