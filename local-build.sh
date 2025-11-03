@@ -158,24 +158,14 @@ if [[ "$1" != "--skip-rescue" ]]; then
             echo "Creating $dir/.br-external.mk"
             touch "$dir/.br-external.mk"
 
-            # Check for legacy options and try to fix
-            echo "Checking for legacy options in $config..."
-            if make O=$dir olddefconfig 2>&1 | tee /tmp/olddefconfig_$dir.log | grep -q "legacy"; then
-                echo "Legacy options detected, attempting to clean config..."
-                # Extract key settings we want to keep
-                grep "^BR2_x86_64=y" "$config" > "$config.new" || echo "BR2_x86_64=y" > "$config.new"
-                grep "^BR2_PACKAGE_SEDUTIL=y" "$config" >> "$config.new" || echo "BR2_PACKAGE_SEDUTIL=y" >> "$config.new"
-                grep "^BR2_PACKAGE_GNU_EFI=y" "$config" >> "$config.new" || echo "BR2_PACKAGE_GNU_EFI=y" >> "$config.new"
-                grep "^BR2_PACKAGE_BUSYBOX=y" "$config" >> "$config.new" || echo "BR2_PACKAGE_BUSYBOX=y" >> "$config.new"
-                grep "^BR2_PACKAGE_UTIL_LINUX=y" "$config" >> "$config.new" || echo "BR2_PACKAGE_UTIL_LINUX=y" >> "$config.new"
-                grep "^BR2_PACKAGE_ZIP=y" "$config" >> "$config.new" || echo "BR2_PACKAGE_ZIP=y" >> "$config.new"
-                grep "^BR2_PACKAGE_OVERRIDE_FILE=" "$config" >> "$config.new" || true
-                grep "^BR2_ROOTFS_OVERLAY=" "$config" >> "$config.new" || true
-                grep "^BR2_LINUX_KERNEL" "$config" >> "$config.new" || true
-                echo 'BR2_EXTERNAL=' >> "$config.new"
-                mv "$config.new" "$config"
-                echo "Regenerating config with olddefconfig..."
-                make O=$dir olddefconfig
+            # Run olddefconfig to clean up any legacy options
+            echo "Running olddefconfig to clean up legacy options in $config..."
+            make O=$dir olddefconfig 2>&1 | tee /tmp/olddefconfig_$dir.log || true
+
+            # Verify BR2_EXTERNAL is still set after olddefconfig
+            if ! grep -q "^BR2_EXTERNAL" "$config"; then
+                echo "Re-adding BR2_EXTERNAL to $config after olddefconfig"
+                echo 'BR2_EXTERNAL=' >> "$config"
             fi
         else
             echo "Config not found: $config"
@@ -184,7 +174,8 @@ if [[ "$1" != "--skip-rescue" ]]; then
 
     echo "=== Building PBA root ==="
     echo "Building 64bit PBA Linux system..."
-    make -j$(nproc) O=64bit 2>&1 | tee 64bit/build_output.txt
+    # Use sequential build to avoid glibc parallel build race conditions
+    MAKEFLAGS=-j1 make O=64bit 2>&1 | tee 64bit/build_output.txt
     if [ ${PIPESTATUS[0]} -ne 0 ]; then
         echo "ERROR: 64bit build failed"
         tail -100 64bit/build_output.txt
@@ -195,7 +186,8 @@ if [[ "$1" != "--skip-rescue" ]]; then
     ls -lah 64bit/target/sbin/ || echo "64bit/target/sbin/ not found"
 
     echo "Building 32bit PBA Linux system..."
-    make -j$(nproc) O=32bit 2>&1 | tee 32bit/build_output.txt
+    # Use sequential build to avoid glibc parallel build race conditions
+    MAKEFLAGS=-j1 make O=32bit 2>&1 | tee 32bit/build_output.txt
     if [ ${PIPESTATUS[0]} -ne 0 ]; then
         echo "ERROR: 32bit build failed"
         tail -100 32bit/build_output.txt
@@ -225,7 +217,7 @@ if [[ "$1" != "--skip-rescue" ]]; then
         fi
     }
     
-    echo "=== Building syslinux for UEFI ==="
+    echo "=== Building syslinux ==="
     SYSLINUX_DIR=$(find scratch -maxdepth 1 -type d -name 'syslinux-*' | head -n 1)
     if [ -z "$SYSLINUX_DIR" ]; then
         echo "ERROR: syslinux directory not found"
@@ -233,18 +225,55 @@ if [[ "$1" != "--skip-rescue" ]]; then
     fi
     echo "Found syslinux at: $SYSLINUX_DIR"
 
-    # Fix for GCC 10+ (syslinux 6.03 multiple definition errors)
+    # Apply all syslinux patches
     echo "Applying GCC 10+ compatibility patch..."
     cd "$SYSLINUX_DIR"
     patch -p1 < ../../syslinux-gcc10-muldefs.patch
 
-    make -j$(nproc) efi64
+    echo "Applying binutils 2.39+ compatibility patch..."
+    patch -p1 < ../../syslinux-binutils-2.39.patch
+
+    echo "Applying glibc 2.28+ compatibility patch..."
+    patch -p1 < ../../syslinux-glibc-2.28.patch
+
+    echo "Skipping gPXE build..."
+    patch -p1 < ../../syslinux-skip-gpxe.patch
+
+    # Build syslinux (ignore DOS build errors - we do not need DOS syslinux)
+    echo "Building syslinux BIOS..."
+    make -j$(nproc) bios || true
+    echo "Building syslinux EFI64..."
+    make -j$(nproc) efi64 || true
+
+    # Verify required files were built
+    echo "Verifying required syslinux files..."
+    if [ ! -f bios/mbr/mbr.bin ]; then
+        echo "ERROR: bios/mbr/mbr.bin not found"
+        exit 1
+    fi
+    if [ ! -f bios/extlinux/extlinux ]; then
+        echo "ERROR: bios/extlinux/extlinux not found"
+        exit 1
+    fi
+    if [ ! -f efi64/efi/syslinux.efi ]; then
+        echo "ERROR: efi64/efi/syslinux.efi not found"
+        exit 1
+    fi
+    if [ ! -f efi64/com32/elflink/ldlinux/ldlinux.e64 ]; then
+        echo "ERROR: efi64/com32/elflink/ldlinux/ldlinux.e64 not found"
+        exit 1
+    fi
+    echo "All required syslinux files built successfully!"
     cd ../..
-    
+
+    echo "=== Building BIOS32 ==="
+    sudo ./buildbios
+
     echo "=== Building UEFI64 ==="
     sudo ./buildUEFI64
-    
-    echo "=== Building rescue image ==="
+
+    echo "=== Building rescue images ==="
+    ./buildrescue Rescue32
     ./buildrescue Rescue64
     
     echo "=== Listing built images ==="

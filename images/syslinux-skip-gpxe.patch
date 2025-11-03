@@ -1,0 +1,12 @@
+--- a/Makefile
++++ b/Makefile
+@@ -185,7 +185,7 @@ NETINSTALLABLE = efi/syslinux.efi $(INSTALLABLE_MODULES)
+ 
+ else
+ 
+-BSUBDIRS = codepage com32 lzo core memdisk mbr gpxe sample \
++BSUBDIRS = codepage com32 lzo core memdisk mbr sample \
+ 	   diag libinstaller dos win32 win64 dosutil txt
+ 
+ ITARGET  =
+
