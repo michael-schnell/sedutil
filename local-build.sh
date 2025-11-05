@@ -1,12 +1,64 @@
 #!/bin/bash
 # Local build script for sedutil
 # This mimics the GitHub Actions workflow for local testing
+#
+# Usage:
+#   ./local-build.sh              - Full build (clean + binaries + rescue images)
+#   ./local-build.sh --skip-clean - Skip clean, rebuild binaries and rescue images
+#   ./local-build.sh --skip-rescue - Build binaries only, skip rescue images
+#   ./local-build.sh --package-only - Only package existing artifacts (no build)
 
 set -e  # Exit on error
 
 echo "=========================================="
 echo "sedutil Local Build Script"
 echo "=========================================="
+echo ""
+
+# Parse command line arguments
+SKIP_CLEAN=false
+SKIP_RESCUE=false
+PACKAGE_ONLY=false
+
+for arg in "$@"; do
+    case $arg in
+        --skip-clean)
+            SKIP_CLEAN=true
+            echo "Mode: Skip clean (incremental build)"
+            ;;
+        --skip-rescue)
+            SKIP_RESCUE=true
+            echo "Mode: Skip rescue image build"
+            ;;
+        --package-only)
+            PACKAGE_ONLY=true
+            echo "Mode: Package only (no build)"
+            ;;
+        --help|-h)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  (no options)      Full build: clean + binaries + rescue images (20-40 min)"
+            echo "  --skip-clean      Incremental build: rebuild binaries and rescue images"
+            echo "  --skip-rescue     Build binaries only, skip rescue images (fast)"
+            echo "  --package-only    Package existing artifacts without rebuilding (instant)"
+            echo "  --help, -h        Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  $0                    # Full clean build with rescue images"
+            echo "  $0 --skip-rescue      # Quick build, binaries only"
+            echo "  $0 --package-only     # Re-package existing build artifacts"
+            echo ""
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $arg"
+            echo "Usage: $0 [--skip-clean] [--skip-rescue] [--package-only]"
+            echo "Run '$0 --help' for more information"
+            exit 1
+            ;;
+    esac
+done
 echo ""
 
 # Check if running on Linux
@@ -66,43 +118,56 @@ else
 fi
 echo ""
 
-# Clean previous build artifacts
-echo "Cleaning previous build artifacts..."
-rm -rf .ci_artifacts .ci_artifacts_backup
-mkdir -p .ci_artifacts
-echo ""
+# Skip to packaging if requested
+if [ "$PACKAGE_ONLY" = true ]; then
+    echo "Skipping build steps, going directly to packaging..."
+    echo ""
+    # Jump to Step 6
+else
+    # Clean previous build artifacts (unless --skip-clean)
+    if [ "$SKIP_CLEAN" = false ]; then
+        echo "Cleaning previous build artifacts..."
+        rm -rf .ci_artifacts .ci_artifacts_backup
+        mkdir -p .ci_artifacts
+        echo ""
+    else
+        echo "Skipping clean (incremental build)..."
+        mkdir -p .ci_artifacts .ci_artifacts_backup
+        echo ""
+    fi
 
-# Step 1: Prepare build
-echo "=========================================="
-echo "Step 1: Prepare build (autoreconf + configure)"
-echo "=========================================="
-autoreconf --install || true
-./configure || {
-    echo "ERROR: Configure failed. Check config.log:"
-    cat config.log || true
-    exit 1
-}
-echo ""
+    # Step 1: Prepare build
+    echo "=========================================="
+    echo "Step 1: Prepare build (autoreconf + configure)"
+    echo "=========================================="
+    autoreconf --install || true
+    ./configure || {
+        echo "ERROR: Configure failed. Check config.log:"
+        cat config.log || true
+        exit 1
+    }
+    echo ""
 
-# Step 2: Build binaries
-echo "=========================================="
-echo "Step 2: Build sedutil binaries"
-echo "=========================================="
-make -j$(nproc)
-echo ""
+    # Step 2: Build binaries
+    echo "=========================================="
+    echo "Step 2: Build sedutil binaries"
+    echo "=========================================="
+    make -j$(nproc)
+    echo ""
 
-# Step 3: Backup binaries
-echo "=========================================="
-echo "Step 3: Backup binaries before rescue image build"
-echo "=========================================="
-mkdir -p .ci_artifacts_backup
-cp sedutil-cli .ci_artifacts_backup/ 2>/dev/null || echo "WARNING: sedutil-cli not found"
-cp linuxpba .ci_artifacts_backup/ 2>/dev/null || echo "WARNING: linuxpba not found"
-ls -lah .ci_artifacts_backup/
-echo ""
+    # Step 3: Backup binaries
+    echo "=========================================="
+    echo "Step 3: Backup binaries before rescue image build"
+    echo "=========================================="
+    mkdir -p .ci_artifacts_backup
+    cp sedutil-cli .ci_artifacts_backup/ 2>/dev/null || echo "WARNING: sedutil-cli not found"
+    cp linuxpba .ci_artifacts_backup/ 2>/dev/null || echo "WARNING: linuxpba not found"
+    ls -lah .ci_artifacts_backup/
+    echo ""
+fi
 
 # Step 4: Build rescue image (optional, can be skipped with --skip-rescue)
-if [[ "$1" != "--skip-rescue" ]]; then
+if [ "$SKIP_RESCUE" = false ] && [ "$PACKAGE_ONLY" = false ]; then
     echo "=========================================="
     echo "Step 4: Build rescue image (UEFI 64-bit)"
     echo "=========================================="
@@ -162,6 +227,28 @@ if [[ "$1" != "--skip-rescue" ]]; then
     if ! grep -q "^BR2_EXTERNAL" 64bit/.config; then
         echo 'BR2_EXTERNAL=' >> 64bit/.config
     fi
+
+    # Create distribution tarball and extract it for buildroot override
+    echo "=== Creating sedutil distribution tarball ==="
+    cd ../../..
+    autoreconf
+    ./configure
+    make dist
+    mkdir -p images/scratch/buildroot/dl/
+    cp sedutil-*.tar.gz images/scratch/buildroot/dl/
+
+    # Extract the distribution tarball for buildroot override
+    echo "=== Extracting sedutil distribution for buildroot override ==="
+    cd images/scratch/buildroot/dl
+    tar xvfz sedutil-*.tar.gz
+    cd ..
+
+    echo "=== Cleaning up after dist creation ==="
+    cd ../../..
+    make distclean
+
+    # Return to buildroot directory
+    cd images/scratch/buildroot
 
     # Setup 32bit build directory
     echo "=== Setting up 32bit build directory ==="
@@ -323,20 +410,20 @@ echo "=========================================="
 echo "Step 6: Collect artifacts"
 echo "=========================================="
 
-# Find binaries
-BINFILES=$(find . -type f \( -name 'sedutil-cli' -o -name 'linuxpba' \) 2>/dev/null || true)
+# Find binaries (exclude .ci_artifacts to avoid copying to itself)
+BINFILES=$(find . -type f \( -name 'sedutil-cli' -o -name 'linuxpba' \) -not -path './.ci_artifacts/*' 2>/dev/null | head -2 || true)
 if [ -n "$BINFILES" ]; then
     echo "Found binaries:"
     echo "$BINFILES"
     for f in $BINFILES; do
-        cp "$f" .ci_artifacts/
+        cp -f "$f" .ci_artifacts/ 2>/dev/null || true
     done
 else
     echo "WARNING: No sedutil binaries found"
 fi
 
-# Find rescue images
-IMGFILES=$(find images -type f -name '*Rescue*64*.img.gz' 2>/dev/null || true)
+# Find rescue images (look for all image types)
+IMGFILES=$(find images -type f \( -name 'RESCUE*.img.gz' -o -name 'BIOS*.img.gz' -o -name 'UEFI*.img.gz' \) 2>/dev/null || true)
 if [ -n "$IMGFILES" ]; then
     echo "Found rescue images:"
     echo "$IMGFILES"
@@ -345,6 +432,7 @@ if [ -n "$IMGFILES" ]; then
     done
 else
     echo "WARNING: No rescue images found"
+    echo "Searched for: RESCUE*.img.gz, BIOS*.img.gz, UEFI*.img.gz in images/"
 fi
 
 echo ""

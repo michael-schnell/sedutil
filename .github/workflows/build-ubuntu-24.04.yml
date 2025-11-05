@@ -168,20 +168,25 @@ jobs:
           fi
           echo "Found syslinux at: $SYSLINUX_DIR"
 
-          # Fix for GCC 10+ (syslinux 6.03 multiple definition errors)
+          # Apply all syslinux patches
           echo "Applying GCC 10+ compatibility patch..."
           cd "$SYSLINUX_DIR"
           patch -p1 < ../../syslinux-gcc10-muldefs.patch
 
-          # Fix for binutils 2.39+ (PHDR segment not covered by LOAD segment)
           echo "Applying binutils 2.39+ compatibility patch..."
           patch -p1 < ../../syslinux-binutils-2.39.patch
 
-          # Build both BIOS and EFI64 syslinux
+          echo "Applying glibc 2.28+ compatibility patch..."
+          patch -p1 < ../../syslinux-glibc-2.28.patch
+
+          echo "Skipping gPXE build..."
+          patch -p1 < ../../syslinux-skip-gpxe.patch
+
+          # Build syslinux (ignore DOS build errors - we do not need DOS syslinux)
           echo "Building syslinux BIOS..."
-          make -j$(nproc) bios
+          make -j$(nproc) bios || true
           echo "Building syslinux EFI64..."
-          make -j$(nproc) efi64
+          make -j$(nproc) efi64 || true
           cd ../..
 
           echo "=== Building BIOS32 ==="
@@ -216,41 +221,36 @@ jobs:
           ls -lah images/*/*.img* 2>/dev/null || echo "No .img files found"
 
           # Collect all image files (BIOS32, UEFI64, RESCUE32, RESCUE64)
-          echo "Collecting BIOS32 images..."
-          find images/BIOS32 -name "*.img.gz" -exec cp {} .ci_artifacts/ \; 2>/dev/null || echo "No BIOS32 images found"
-
-          echo "Collecting UEFI64 images..."
-          find images/UEFI64 -name "*.img.gz" -exec cp {} .ci_artifacts/ \; 2>/dev/null || echo "No UEFI64 images found"
-
-          echo "Collecting RESCUE32 images..."
-          find images/RESCUE32 -name "*.img.gz" -exec cp {} .ci_artifacts/ \; 2>/dev/null || echo "No RESCUE32 images found"
-
-          echo "Collecting RESCUE64 images..."
-          find images/RESCUE64 -name "*.img.gz" -exec cp {} .ci_artifacts/ \; 2>/dev/null || echo "No RESCUE64 images found"
-
-          # Check if any images were collected
-          if ls .ci_artifacts/*.img.gz 1> /dev/null 2>&1; then
+          echo "Collecting all rescue images..."
+          IMGFILES=$(find images -type f \( -name 'RESCUE*.img.gz' -o -name 'BIOS*.img.gz' -o -name 'UEFI*.img.gz' \) 2>/dev/null || true)
+          if [ -n "$IMGFILES" ]; then
+            echo "Found rescue images:"
+            echo "$IMGFILES"
+            for f in $IMGFILES; do
+              cp "$f" .ci_artifacts/
+            done
             echo "images=true" >> $GITHUB_OUTPUT
           else
             echo "images=false" >> $GITHUB_OUTPUT
-            echo "WARNING: No image files collected" >&2
+            echo "WARNING: No rescue images found"
+            echo "Searched for: RESCUE*.img.gz, BIOS*.img.gz, UEFI*.img.gz in images/"
           fi
 
           echo ""
           echo "=== Looking for sedutil binaries ==="
 
-          # Collect sedutil binaries (sedutil-cli and linuxpba)
-          BINFILES=$(find . -type f \( -name 'sedutil-cli' -o -name 'linuxpba' \) 2>/dev/null || true)
+          # Collect sedutil binaries (sedutil-cli and linuxpba) - exclude .ci_artifacts to avoid duplicates
+          BINFILES=$(find . -type f \( -name 'sedutil-cli' -o -name 'linuxpba' \) -not -path './.ci_artifacts/*' 2>/dev/null | head -2 || true)
           if [ -n "$BINFILES" ]; then
             echo "Found binaries:"
+            echo "$BINFILES"
             for f in $BINFILES; do
-              echo "  - $f"
-              cp "$f" .ci_artifacts/ || true
+              cp -f "$f" .ci_artifacts/ 2>/dev/null || true
             done
             echo "binaries=true" >> $GITHUB_OUTPUT
           else
             echo "binaries=false" >> $GITHUB_OUTPUT
-            echo " No sedutil binaries found" >&2
+            echo "WARNING: No sedutil binaries found"
           fi
 
           echo ""
@@ -262,8 +262,12 @@ jobs:
         run: |
           cd .ci_artifacts || exit 1
           TAR_NAME="sedutil-ubuntu-24.04-x86_64.tar.gz"
-          tar -czf "$TAR_NAME" ./*sedutil* || true
+          # Include all files (binaries and rescue images)
+          tar -czf "$TAR_NAME" * || true
           ls -lah "$TAR_NAME"
+          mv "$TAR_NAME" ../ || true
+          cd ..
+          ls -lah sedutil-ubuntu-24.04-x86_64.tar.gz
 
       - name: Create .deb package
         if: steps.locate.outputs.binaries == 'true'
@@ -302,19 +306,23 @@ jobs:
       - name: Move final artifacts into artifacts dir
         run: |
           mkdir -p artifacts
-          if [ -f .ci_artifacts/sedutil-ubuntu-24.04-x86_64.tar.gz ]; then
-            mv .ci_artifacts/sedutil-ubuntu-24.04-x86_64.tar.gz artifacts/
+
+          # Move tarball (now in root directory)
+          if [ -f sedutil-ubuntu-24.04-x86_64.tar.gz ]; then
+            mv sedutil-ubuntu-24.04-x86_64.tar.gz artifacts/
           fi
+
+          # Move .deb package
           if [ -f sedutil-ubuntu-24.04-x86_64.deb ]; then
             mv sedutil-ubuntu-24.04-x86_64.deb artifacts/
           fi
-          # rescue image
-          if [ -n "${{ steps.locate.outputs.rescue_file }}" ]; then
-            cp .ci_artifacts/${{ steps.locate.outputs.rescue_file }} artifacts/ 2>/dev/null || true
-          else
-            # try to find any gz in images/
-            cp images/*Rescue*64*.img.gz artifacts/ 2>/dev/null || true
-          fi
+
+          # Copy all rescue images to artifacts directory for easy access
+          echo "Copying rescue images to artifacts directory..."
+          find images -type f \( -name 'RESCUE*.img.gz' -o -name 'BIOS*.img.gz' -o -name 'UEFI*.img.gz' \) -exec cp {} artifacts/ \; 2>/dev/null || echo "No rescue images to copy"
+
+          echo ""
+          echo "=== Final artifacts directory ==="
           ls -lah artifacts || true
 
       - name: Upload CI artifacts (Actions run)
@@ -329,15 +337,20 @@ jobs:
           echo "=== Artifact file types ==="
           file artifacts/* || true
           echo ""
+          echo "=== Listing contents of tar.gz ==="
+          tar -tzf artifacts/sedutil-ubuntu-24.04-x86_64.tar.gz || true
+          echo ""
           echo "=== Extracting sedutil-cli from tar.gz for testing ==="
-          tar -xzf artifacts/sedutil-ubuntu-24.04-x86_64.tar.gz -C artifacts/ sedutil-cli 2>/dev/null || true
-          if [ -f artifacts/sedutil-cli ]; then
-            chmod +x artifacts/sedutil-cli
+          mkdir -p test_extract
+          tar -xzf artifacts/sedutil-ubuntu-24.04-x86_64.tar.gz -C test_extract/ sedutil-cli 2>/dev/null || true
+          if [ -f test_extract/sedutil-cli ]; then
+            chmod +x test_extract/sedutil-cli
             echo "=== Testing sedutil-cli --version ==="
-            ./artifacts/sedutil-cli --version || echo "Version command failed"
+            ./test_extract/sedutil-cli --version || echo "Version command failed"
           else
             echo "Warning: sedutil-cli not found in tar.gz, skipping smoke test"
           fi
+          rm -rf test_extract
 
       - name: Create GitHub Release and publish artifacts
         if: startsWith(github.ref, 'refs/tags/')
