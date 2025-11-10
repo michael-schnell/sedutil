@@ -128,6 +128,8 @@ else
     if [ "$SKIP_CLEAN" = false ]; then
         echo "Cleaning previous build artifacts..."
         rm -rf .ci_artifacts .ci_artifacts_backup
+        rm -f sedutil-local-x86_64.tar.gz sedutil-local-x86_64.deb
+        rm -f sedutil-1.15.1.tar.gz  # Clean dist tarball too
         mkdir -p .ci_artifacts
         echo ""
     else
@@ -235,12 +237,13 @@ if [ "$SKIP_RESCUE" = false ] && [ "$PACKAGE_ONLY" = false ]; then
     ./configure
     make dist
     mkdir -p images/scratch/buildroot/dl/
-    cp sedutil-*.tar.gz images/scratch/buildroot/dl/
+    # Only copy the distribution tarball (sedutil-1.15.1.tar.gz), not the local build tarball
+    cp sedutil-1.15.1.tar.gz images/scratch/buildroot/dl/
 
     # Extract the distribution tarball for buildroot override
     echo "=== Extracting sedutil distribution for buildroot override ==="
     cd images/scratch/buildroot/dl
-    tar xvfz sedutil-*.tar.gz
+    tar xvfz sedutil-1.15.1.tar.gz
     cd ..
 
     echo "=== Cleaning up after dist creation ==="
@@ -326,7 +329,7 @@ if [ "$SKIP_RESCUE" = false ] && [ "$PACKAGE_ONLY" = false ]; then
         fi
     }
     
-    echo "=== Building syslinux ==="
+    echo "=== Verifying syslinux pre-built binaries ==="
     SYSLINUX_DIR=$(find scratch -maxdepth 1 -type d -name 'syslinux-*' | head -n 1)
     if [ -z "$SYSLINUX_DIR" ]; then
         echo "ERROR: syslinux directory not found"
@@ -334,27 +337,13 @@ if [ "$SKIP_RESCUE" = false ] && [ "$PACKAGE_ONLY" = false ]; then
     fi
     echo "Found syslinux at: $SYSLINUX_DIR"
 
-    # Apply all syslinux patches
-    echo "Applying GCC 10+ compatibility patch..."
+    # NOTE: We use the pre-built syslinux binaries from the tarball
+    # Building from source produces smaller, non-functional EFI binaries
+    # The pre-built syslinux.efi is 196KB vs 122KB when built from source
+
     cd "$SYSLINUX_DIR"
-    patch -p1 < ../../syslinux-gcc10-muldefs.patch
 
-    echo "Applying binutils 2.39+ compatibility patch..."
-    patch -p1 < ../../syslinux-binutils-2.39.patch
-
-    echo "Applying glibc 2.28+ compatibility patch..."
-    patch -p1 < ../../syslinux-glibc-2.28.patch
-
-    echo "Skipping gPXE build..."
-    patch -p1 < ../../syslinux-skip-gpxe.patch
-
-    # Build syslinux (ignore DOS build errors - we do not need DOS syslinux)
-    echo "Building syslinux BIOS..."
-    make -j$(nproc) bios || true
-    echo "Building syslinux EFI64..."
-    make -j$(nproc) efi64 || true
-
-    # Verify required files were built
+    # Verify required pre-built files exist
     echo "Verifying required syslinux files..."
     if [ ! -f bios/mbr/mbr.bin ]; then
         echo "ERROR: bios/mbr/mbr.bin not found"
@@ -372,7 +361,9 @@ if [ "$SKIP_RESCUE" = false ] && [ "$PACKAGE_ONLY" = false ]; then
         echo "ERROR: efi64/com32/elflink/ldlinux/ldlinux.e64 not found"
         exit 1
     fi
-    echo "All required syslinux files built successfully!"
+
+    echo "All required syslinux pre-built files found!"
+    ls -lh bios/mbr/mbr.bin bios/extlinux/extlinux efi64/efi/syslinux.efi efi64/com32/elflink/ldlinux/ldlinux.e64
     cd ../..
 
     echo "=== Building BIOS32 ==="

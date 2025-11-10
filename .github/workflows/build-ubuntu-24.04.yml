@@ -94,13 +94,13 @@ jobs:
           autoreconf
           ./configure
           make dist
-          # Copy tarball to buildroot dl/ directory and extract it
+          # Copy only the distribution tarball (sedutil-1.15.1.tar.gz) to buildroot dl/ directory
           mkdir -p images/scratch/buildroot/dl/
-          cp sedutil-*.tar.gz images/scratch/buildroot/dl/
+          cp sedutil-1.15.1.tar.gz images/scratch/buildroot/dl/
           cd images/scratch/buildroot/dl
-          tar xvfz sedutil-*.tar.gz
+          tar xvfz sedutil-1.15.1.tar.gz
           ls -lah
-          ls -lah sedutil-*/ || echo "ERROR: sedutil directory not created"
+          ls -lah sedutil-1.15.1/ || echo "ERROR: sedutil-1.15.1 directory not created"
           cd ..
 
           echo "=== Fixing BR2_EXTERNAL in buildroot configs ==="
@@ -160,7 +160,7 @@ jobs:
           ls -lah 32bit/target/sbin/ || echo "32bit/target/sbin/ not found"
           cd ../..
 
-          echo "=== Building syslinux for UEFI ==="
+          echo "=== Verifying syslinux pre-built binaries ==="
           SYSLINUX_DIR=$(find scratch -maxdepth 1 -type d -name 'syslinux-*' | head -n 1)
           if [ -z "$SYSLINUX_DIR" ]; then
             echo "ERROR: syslinux directory not found"
@@ -168,25 +168,13 @@ jobs:
           fi
           echo "Found syslinux at: $SYSLINUX_DIR"
 
-          # Apply all syslinux patches
-          echo "Applying GCC 10+ compatibility patch..."
+          # NOTE: We use the pre-built syslinux binaries from the tarball
+          # Building from source produces smaller, non-functional EFI binaries (122KB vs 196KB)
+          # The pre-built binaries are tested and known to work
+
           cd "$SYSLINUX_DIR"
-          patch -p1 < ../../syslinux-gcc10-muldefs.patch
-
-          echo "Applying binutils 2.39+ compatibility patch..."
-          patch -p1 < ../../syslinux-binutils-2.39.patch
-
-          echo "Applying glibc 2.28+ compatibility patch..."
-          patch -p1 < ../../syslinux-glibc-2.28.patch
-
-          echo "Skipping gPXE build..."
-          patch -p1 < ../../syslinux-skip-gpxe.patch
-
-          # Build syslinux (ignore DOS build errors - we do not need DOS syslinux)
-          echo "Building syslinux BIOS..."
-          make -j$(nproc) bios || true
-          echo "Building syslinux EFI64..."
-          make -j$(nproc) efi64 || true
+          echo "Verifying required syslinux pre-built files..."
+          ls -lh bios/mbr/mbr.bin bios/extlinux/extlinux efi64/efi/syslinux.efi efi64/com32/elflink/ldlinux/ldlinux.e64
           cd ../..
 
           echo "=== Building BIOS32 ==="
