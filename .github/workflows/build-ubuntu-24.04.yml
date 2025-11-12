@@ -7,8 +7,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Version Management:
+#   To change the sedutil version, update SEDUTIL_VERSION below AND:
+#   - images/buildroot/packages/sedutil/sedutil.mk (SEDUTIL_VERSION)
 env:
   DEB_MAINTAINER: "CI <ci@example.com>"
+  SEDUTIL_VERSION: "1.15.1"  # Change version in one place
 
 jobs:
   build-and-package:
@@ -94,13 +98,13 @@ jobs:
           autoreconf
           ./configure
           make dist
-          # Copy only the distribution tarball (sedutil-1.15.1.tar.gz) to buildroot dl/ directory
+          # Copy only the distribution tarball (sedutil-${SEDUTIL_VERSION}.tar.gz) to buildroot dl/ directory
           mkdir -p images/scratch/buildroot/dl/
-          cp sedutil-1.15.1.tar.gz images/scratch/buildroot/dl/
+          cp sedutil-${SEDUTIL_VERSION}.tar.gz images/scratch/buildroot/dl/
           cd images/scratch/buildroot/dl
-          tar xvfz sedutil-1.15.1.tar.gz
+          tar xvfz sedutil-${SEDUTIL_VERSION}.tar.gz
           ls -lah
-          ls -lah sedutil-1.15.1/ || echo "ERROR: sedutil-1.15.1 directory not created"
+          ls -lah sedutil-${SEDUTIL_VERSION}/ || echo "ERROR: sedutil-${SEDUTIL_VERSION} directory not created"
           cd ..
 
           echo "=== Fixing BR2_EXTERNAL in buildroot configs ==="
