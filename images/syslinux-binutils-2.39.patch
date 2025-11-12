@@ -1,0 +1,12 @@
+--- a/core/Makefile
++++ b/core/Makefile
+@@ -164,7 +164,7 @@ LDSCRIPT = $(SRC)/$(ARCH)/syslinux.ld
+
+ %.elf: %.o $(LIBDEP) $(LDSCRIPT) $(AUXLIBS)
+ 	$(LD) $(LDFLAGS) -z muldefs -Bsymbolic $(LD_PIE) -E --hash-style=gnu -T $(LDSCRIPT) -M -o $@ $< \
+-		--start-group $(LIBS) $(subst $(*F).elf,lib$(*F).a,$@) --end-group \
++		--start-group $(LIBS) $(subst $(*F).elf,lib$(*F).a,$@) --end-group --no-dynamic-linker \
+ 		> $(@:.elf=.map)
+ 	$(OBJDUMP) -h $@ > $(@:.elf=.sec)
+ 	$(PERL) $(SRC)/lstadjust.pl $(@:.elf=.lsr) $(@:.elf=.sec) $(@:.elf=.lst)
+

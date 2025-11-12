@@ -1,0 +1,358 @@
+name: Build sedutil (Ubuntu 24.04, x86_64)
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+# Version Management:
+#   To change the sedutil version, update SEDUTIL_VERSION below AND:
+#   - images/buildroot/packages/sedutil/sedutil.mk (SEDUTIL_VERSION)
+env:
+  DEB_MAINTAINER: "CI <ci@example.com>"
+  SEDUTIL_VERSION: "1.15.1"  # Change version in one place
+
+jobs:
+  build-and-package:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up APT and install prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get upgrade -y
+          sudo apt-get install -y \
+            build-essential autoconf pkg-config libc6-dev make g++-multilib m4 libtool ncurses-dev unzip zip git python3 zlib1g-dev wget bsdmainutils automake curl bc rsync cpio nasm fakeroot dpkg-dev \
+            uuid-dev libuuid1 mtools genisoimage syslinux dosfstools gdisk kpartx linux-libc-dev dos2unix
+
+      - name: Show git info
+        run: |
+          echo "Ref: $GITHUB_REF"
+          echo "SHA: $GITHUB_SHA"
+          git --no-pager log -1 --pretty=oneline || true
+
+      - name: Prepare build (autoreconf + configure)
+        run: |
+          autoreconf --install || true
+          ./configure || ( (cat config.log || true) && exit 1 )
+
+      - name: Build all
+        run: |
+          make -j$(nproc)
+
+      - name: Save binaries before rescue image build
+        run: |
+          mkdir -p .ci_artifacts_backup
+          cp sedutil-cli .ci_artifacts_backup/ 2>/dev/null || echo "sedutil-cli not found"
+          cp linuxpba .ci_artifacts_backup/ 2>/dev/null || echo "linuxpba not found"
+          ls -lah .ci_artifacts_backup/
+
+      - name: Build rescue image (UEFI 64-bit Rescue64)
+        working-directory: ./images
+        run: |
+          echo "=== Getting resources ==="
+          ./getresources
+
+          echo "=== Setting up buildroot (clone and copy configs) ==="
+          mkdir -p scratch
+          cd scratch
+          # Clone buildroot
+          rm -rf buildroot
+          git clone ${BUILDROOT:-git://git.buildroot.net/buildroot}
+          cd buildroot
+          git checkout -b PBABUILD ${BUILDROOT_TAG:-2021.08.3}
+          git reset --hard
+          git clean -df
+
+          # Copy config files for 64bit
+          mkdir 64bit
+          cp ../../buildroot/64bit/.config 64bit/
+          cp ../../buildroot/64bit/* 64bit/ 2>/dev/null || true
+          cp -r ../../buildroot/64bit/overlay 64bit/ 2>/dev/null || true
+
+          # Copy config files for 32bit
+          mkdir 32bit
+          cp ../../buildroot/32bit/.config 32bit/
+          cp ../../buildroot/32bit/* 32bit/ 2>/dev/null || true
+          cp -r ../../buildroot/32bit/overlay 32bit/ 2>/dev/null || true
+
+          # Add sedutil packages (note: repository has packages/ with 's', buildroot has package/ without 's')
+          sed -i '/sedutil/d' package/Config.in
+          sed -i '/menu "System tools"/a \\tsource "package/sedutil/Config.in"' package/Config.in
+          cp -r ../../buildroot/packages/sedutil/ package/
+
+          # Fix line endings for buildroot package files
+          find package/sedutil/ -type f -exec dos2unix {} \; 2>/dev/null || find package/sedutil/ -type f -exec sed -i 's/\r$//' {} \;
+
+          echo "=== Creating sedutil distribution tarball ==="
+          # Go back to workspace root to run make dist
+          cd ../../..
+          autoreconf
+          ./configure
+          make dist
+          # Copy only the distribution tarball (sedutil-${SEDUTIL_VERSION}.tar.gz) to buildroot dl/ directory
+          mkdir -p images/scratch/buildroot/dl/
+          cp sedutil-${SEDUTIL_VERSION}.tar.gz images/scratch/buildroot/dl/
+          cd images/scratch/buildroot/dl
+          tar xvfz sedutil-${SEDUTIL_VERSION}.tar.gz
+          ls -lah
+          ls -lah sedutil-${SEDUTIL_VERSION}/ || echo "ERROR: sedutil-${SEDUTIL_VERSION} directory not created"
+          cd ..
+
+          echo "=== Fixing BR2_EXTERNAL in buildroot configs ==="
+          # Add BR2_EXTERNAL to config files and create .br-external.mk files
+          for dir in 64bit 32bit; do
+            config="$dir/.config"
+            if [ -f "$config" ]; then
+              echo "Found config: $config"
+              if ! grep -q "^BR2_EXTERNAL" "$config"; then
+                echo "Adding BR2_EXTERNAL to $config"
+                echo 'BR2_EXTERNAL=' >> "$config"
+              else
+                echo "BR2_EXTERNAL already exists in $config"
+              fi
+              # Create empty .br-external.mk file
+              echo "Creating $dir/.br-external.mk"
+              touch "$dir/.br-external.mk"
+
+              # Run olddefconfig to set defaults for new options
+              echo "Running olddefconfig for $dir..."
+              make O=$dir olddefconfig
+
+              # Remove legacy configuration marker that olddefconfig may have added
+              echo "Removing BR2_LEGACY marker from $config..."
+              sed -i '/BR2_LEGACY/d' "$config"
+            else
+              echo "Config not found: $config"
+            fi
+          done
+
+          echo "=== Building PBA root ==="
+          echo "Building 64bit PBA Linux system..."
+          # Force truly sequential builds by setting MAKEFLAGS to prevent nested parallel jobs
+          # This is needed because glibc has race conditions even with -j1 at the top level
+          export MAKEFLAGS="-j1"
+          make -j1 O=64bit 2>&1 | tee 64bit/build_output.txt
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "ERROR: 64bit build failed"
+            tail -100 64bit/build_output.txt
+            exit 1
+          fi
+          echo "Checking 64bit build outputs..."
+          ls -lah 64bit/images/ || echo "64bit/images/ not found"
+          ls -lah 64bit/target/sbin/ || echo "64bit/target/sbin/ not found"
+
+          echo "Building 32bit PBA Linux system..."
+          # Force truly sequential builds by setting MAKEFLAGS to prevent nested parallel jobs
+          export MAKEFLAGS="-j1"
+          make -j1 O=32bit 2>&1 | tee 32bit/build_output.txt
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "ERROR: 32bit build failed"
+            tail -100 32bit/build_output.txt
+            exit 1
+          fi
+          echo "Checking 32bit build outputs..."
+          ls -lah 32bit/images/ || echo "32bit/images/ not found"
+          ls -lah 32bit/target/sbin/ || echo "32bit/target/sbin/ not found"
+          cd ../..
+
+          echo "=== Verifying syslinux pre-built binaries ==="
+          SYSLINUX_DIR=$(find scratch -maxdepth 1 -type d -name 'syslinux-*' | head -n 1)
+          if [ -z "$SYSLINUX_DIR" ]; then
+            echo "ERROR: syslinux directory not found"
+            exit 1
+          fi
+          echo "Found syslinux at: $SYSLINUX_DIR"
+
+          # NOTE: We use the pre-built syslinux binaries from the tarball
+          # Building from source produces smaller, non-functional EFI binaries (122KB vs 196KB)
+          # The pre-built binaries are tested and known to work
+
+          cd "$SYSLINUX_DIR"
+          echo "Verifying required syslinux pre-built files..."
+          ls -lh bios/mbr/mbr.bin bios/extlinux/extlinux efi64/efi/syslinux.efi efi64/com32/elflink/ldlinux/ldlinux.e64
+          cd ../..
+
+          echo "=== Building BIOS32 ==="
+          ./buildbios
+
+          echo "=== Building UEFI64 ==="
+          ./buildUEFI64
+
+          echo "=== Building rescue images ==="
+          echo "Building Rescue32..."
+          ./buildrescue Rescue32
+          echo "Building Rescue64..."
+          ./buildrescue Rescue64
+
+          echo "=== Listing built images ==="
+          ls -lah BIOS32/*.img* 2>/dev/null || echo "No BIOS32 image files found"
+          ls -lah UEFI64/*.img* 2>/dev/null || echo "No UEFI64 image files found"
+          ls -lah RESCUE32/*.img* 2>/dev/null || echo "No RESCUE32 image files found"
+          ls -lah RESCUE64/*.img* 2>/dev/null || echo "No RESCUE64 image files found"
+
+      - name: Restore binaries after rescue image build
+        run: |
+          cp .ci_artifacts_backup/* . 2>/dev/null || echo "No binaries to restore"
+          ls -lah sedutil-cli linuxpba 2>/dev/null || echo "Binaries not restored"
+
+      - name: Locate produced artifacts
+        id: locate
+        run: |
+          mkdir -p .ci_artifacts
+
+          echo "=== Looking for images in images/ ==="
+          ls -lah images/*/*.img* 2>/dev/null || echo "No .img files found"
+
+          # Collect all image files (BIOS32, UEFI64, RESCUE32, RESCUE64)
+          echo "Collecting all rescue images..."
+          IMGFILES=$(find images -type f \( -name 'RESCUE*.img.gz' -o -name 'BIOS*.img.gz' -o -name 'UEFI*.img.gz' \) 2>/dev/null || true)
+          if [ -n "$IMGFILES" ]; then
+            echo "Found rescue images:"
+            echo "$IMGFILES"
+            for f in $IMGFILES; do
+              cp "$f" .ci_artifacts/
+            done
+            echo "images=true" >> $GITHUB_OUTPUT
+          else
+            echo "images=false" >> $GITHUB_OUTPUT
+            echo "WARNING: No rescue images found"
+            echo "Searched for: RESCUE*.img.gz, BIOS*.img.gz, UEFI*.img.gz in images/"
+          fi
+
+          echo ""
+          echo "=== Looking for sedutil binaries ==="
+
+          # Collect sedutil binaries (sedutil-cli and linuxpba) - exclude .ci_artifacts to avoid duplicates
+          BINFILES=$(find . -type f \( -name 'sedutil-cli' -o -name 'linuxpba' \) -not -path './.ci_artifacts/*' 2>/dev/null | head -2 || true)
+          if [ -n "$BINFILES" ]; then
+            echo "Found binaries:"
+            echo "$BINFILES"
+            for f in $BINFILES; do
+              cp -f "$f" .ci_artifacts/ 2>/dev/null || true
+            done
+            echo "binaries=true" >> $GITHUB_OUTPUT
+          else
+            echo "binaries=false" >> $GITHUB_OUTPUT
+            echo "WARNING: No sedutil binaries found"
+          fi
+
+          echo ""
+          echo "=== Contents of .ci_artifacts ==="
+          ls -lah .ci_artifacts/
+
+      - name: Create tar.gz artifact
+        if: steps.locate.outputs.binaries == 'true'
+        run: |
+          cd .ci_artifacts || exit 1
+          TAR_NAME="sedutil-ubuntu-24.04-x86_64.tar.gz"
+          # Include all files (binaries and rescue images)
+          tar -czf "$TAR_NAME" * || true
+          ls -lah "$TAR_NAME"
+          mv "$TAR_NAME" ../ || true
+          cd ..
+          ls -lah sedutil-ubuntu-24.04-x86_64.tar.gz
+
+      - name: Create .deb package
+        if: steps.locate.outputs.binaries == 'true'
+        run: |
+          mkdir -p debpkg/DEBIAN debpkg/usr/local/bin
+
+          # Determine version based on context
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            # Tag push - use tag name
+            VERSION="${GITHUB_REF_NAME#v}"
+          elif [[ -n "$GITHUB_HEAD_REF" ]]; then
+            # Pull request - use PR number or branch name
+            # Replace invalid characters (/, _) with hyphens for Debian version compatibility
+            VERSION="0.0.0-pr${GITHUB_HEAD_REF//\//-}"
+            VERSION="${VERSION//_/-}"
+          else
+            # Direct push to branch - use commit SHA
+            VERSION="0.0.0-${GITHUB_SHA:0:7}"
+          fi
+
+          echo "Using version: $VERSION"
+
+          echo "Package: sedutil" > debpkg/DEBIAN/control
+          echo "Version: ${VERSION}" >> debpkg/DEBIAN/control
+          echo "Section: base" >> debpkg/DEBIAN/control
+          echo "Priority: optional" >> debpkg/DEBIAN/control
+          echo "Architecture: amd64" >> debpkg/DEBIAN/control
+          echo "Maintainer: ${DEB_MAINTAINER}" >> debpkg/DEBIAN/control
+          echo "Description: sedutil OPAL drive utilities" >> debpkg/DEBIAN/control
+          cat debpkg/DEBIAN/control
+          cp .ci_artifacts/sedutil-cli debpkg/usr/local/bin/ || true
+          cp .ci_artifacts/sedutil-sleep debpkg/usr/local/bin/ 2>/dev/null || true
+          fakeroot dpkg-deb --build debpkg sedutil-ubuntu-24.04-x86_64.deb || (ls -R debpkg && false)
+          ls -lah sedutil-ubuntu-24.04-x86_64.deb || true
+
+      - name: Move final artifacts into artifacts dir
+        run: |
+          mkdir -p artifacts
+
+          # Move tarball (now in root directory)
+          if [ -f sedutil-ubuntu-24.04-x86_64.tar.gz ]; then
+            mv sedutil-ubuntu-24.04-x86_64.tar.gz artifacts/
+          fi
+
+          # Move .deb package
+          if [ -f sedutil-ubuntu-24.04-x86_64.deb ]; then
+            mv sedutil-ubuntu-24.04-x86_64.deb artifacts/
+          fi
+
+          # Copy all rescue images to artifacts directory for easy access
+          echo "Copying rescue images to artifacts directory..."
+          find images -type f \( -name 'RESCUE*.img.gz' -o -name 'BIOS*.img.gz' -o -name 'UEFI*.img.gz' \) -exec cp {} artifacts/ \; 2>/dev/null || echo "No rescue images to copy"
+
+          echo ""
+          echo "=== Final artifacts directory ==="
+          ls -lah artifacts || true
+
+      - name: Upload CI artifacts (Actions run)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sedutil-artifacts
+          path: artifacts/
+
+      - name: Smoke test binary
+        if: steps.locate.outputs.binaries == 'true'
+        run: |
+          echo "=== Artifact file types ==="
+          file artifacts/* || true
+          echo ""
+          echo "=== Listing contents of tar.gz ==="
+          tar -tzf artifacts/sedutil-ubuntu-24.04-x86_64.tar.gz || true
+          echo ""
+          echo "=== Extracting sedutil-cli from tar.gz for testing ==="
+          mkdir -p test_extract
+          tar -xzf artifacts/sedutil-ubuntu-24.04-x86_64.tar.gz -C test_extract/ sedutil-cli 2>/dev/null || true
+          if [ -f test_extract/sedutil-cli ]; then
+            chmod +x test_extract/sedutil-cli
+            echo "=== Testing sedutil-cli --version ==="
+            ./test_extract/sedutil-cli --version || echo "Version command failed"
+          else
+            echo "Warning: sedutil-cli not found in tar.gz, skipping smoke test"
+          fi
+          rm -rf test_extract
+
+      - name: Create GitHub Release and publish artifacts
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup (list)
+        run: |
+          echo "Done. Artifacts in artifacts/ and uploaded to release if tag pushed."
+
